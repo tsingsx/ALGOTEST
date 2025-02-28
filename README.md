@@ -52,6 +52,12 @@ cp .env.example .env
 
 ## 使用方法
 
+### 文件存储
+
+- **算法需求文档**：请将算法需求文档（PDF格式）放置在 `data/pdfs/` 目录下
+- **测试报告**：测试报告将保存在 `data/reports/` 目录下
+- **测试用例**：测试用例将保存在 `data/testcases/` 目录下
+
 ### 启动服务
 ```bash
 python main.py
