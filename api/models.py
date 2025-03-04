@@ -10,11 +10,6 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 
-class DocRequest(BaseModel):
-    """需求文档请求模型"""
-    doc_path: str = Field(..., description="算法需求文档路径，相对于data/pdfs/目录")
-
-
 class TestCase(BaseModel):
     """测试用例响应模型"""
     id: str = Field(..., description="测试用例ID")

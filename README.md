@@ -50,10 +50,6 @@ cp .env.example .env
 
 ## 使用方法
 
-### 文件存储
-
-- **算法需求文档**：请将算法需求文档（PDF格式）放置在 `data/pdfs/` 目录下
-
 ### 启动服务
 ```bash
 python main.py
@@ -65,7 +61,7 @@ export API_RELOAD=true && python main.py
 ```
 
 ### API接口
-- **POST /api/generate-testcases**：直接从需求文档生成测试用例
+- **POST /api/generate-testcases**：上传需求文档并生成测试用例
 
 ### 测试用例生成功能
 
@@ -82,15 +78,22 @@ export API_RELOAD=true && python main.py
 
 使用 `POST /api/generate-testcases` 接口：
 
-1. 将算法需求文档（PDF格式）放置在 `data/pdfs/` 目录下
-2. 发送POST请求到 `/api/generate-testcases`，请求体包含 `doc_path` 参数，指定需求文档的相对路径
+1. 准备算法需求文档（PDF格式）
+2. 发送POST请求到 `/api/generate-testcases`，使用multipart/form-data格式上传PDF文件
 3. 系统会直接返回生成的测试用例列表
 
 示例请求：
-```json
-{
-  "doc_path": "需求文档.pdf"
-}
+```
+POST /api/generate-testcases HTTP/1.1
+Host: localhost:8000
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="需求文档.pdf"
+Content-Type: application/pdf
+
+(二进制PDF文件内容)
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
 ```
 
 示例响应：

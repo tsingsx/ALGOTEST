@@ -21,7 +21,7 @@ log = get_logger("api")
 # 创建FastAPI应用
 app = FastAPI(
     title="ALGOTEST API",
-    description="大模型驱动的算法测试系统API",
+    description="大模型驱动的算法测试系统API，支持上传算法需求文档并自动生成测试用例",
     version="0.1.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
