@@ -6,6 +6,6 @@
 开发规划：随着项目功能的完善，在此文件中导出更多API组件
 """
 
-from api.api import app
+from api.app import app
 
 __all__ = ['app']

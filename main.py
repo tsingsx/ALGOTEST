@@ -9,13 +9,7 @@
 import uvicorn
 from fastapi import FastAPI
 from core import setup_logging, init_db, get_settings
-
-# 创建FastAPI应用
-app = FastAPI(
-    title="ALGOTEST",
-    description="大模型驱动的算法测试系统",
-    version="0.1.0"
-)
+from api import app
 
 def main():
     """
@@ -32,10 +26,11 @@ def main():
     
     # 启动Web服务
     uvicorn.run(
-        "main:app",
+        "api:app",
         host=settings.api_host,
         port=settings.api_port,
         workers=settings.api_workers,
+        reload=settings.api_reload,
         timeout_keep_alive=settings.api_timeout
     )
 

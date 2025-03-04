@@ -48,5 +48,6 @@ Thumbs.db
 # cursor配置
 .cursorrules
 
+
 # 数据文件夹
 *.pdf
