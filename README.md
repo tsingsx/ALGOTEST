@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ALGOTEST是一个大模型驱动的算法测试系统，能够分析用户输入的算法需求文档，生成测试用例，执行测试，并生成测试报告。系统通过FastAPI封装为API服务，提供RESTful接口供外部调用。
+ALGOTEST是一个大模型驱动的算法测试系统，能够分析用户输入的算法需求文档，自动生成全面的测试用例。系统通过FastAPI封装为API服务，提供RESTful接口供外部调用。
 
 系统主要特点：
 - 使用langgraph构建工作流
@@ -12,10 +12,8 @@ ALGOTEST是一个大模型驱动的算法测试系统，能够分析用户输入
 
 ## 系统架构
 
-系统由三个核心Agent组成：
-1. **分析Agent**：负责分析用户输入的算法需求文档，生成测试用例
-2. **执行Agent**：负责执行测试用例，包括拉取算法镜像、获取数据集、执行测试
-3. **报告Agent**：负责收集测试结果，生成测试报告
+系统由核心分析Agent组成：
+- **分析Agent**：负责分析用户输入的算法需求文档，生成测试用例
 
 ## 安装说明
 
@@ -47,7 +45,7 @@ pip install -r requirements.txt
 4. 配置环境变量
 ```bash
 cp .env.example .env
-# 编辑.env文件，填写必要的配置信息
+# 编辑.env文件，填写必要的配置信息，特别是ZHIPU_API_KEY
 ```
 
 ## 使用方法
@@ -55,33 +53,23 @@ cp .env.example .env
 ### 文件存储
 
 - **算法需求文档**：请将算法需求文档（PDF格式）放置在 `data/pdfs/` 目录下
-- **测试报告**：测试报告将保存在 `data/reports/` 目录下
-- **测试用例**：测试用例将保存在 `data/testcases/` 目录下
 
 ### 启动服务
 ```bash
 python main.py
 ```
 
+或者使用热重载模式（开发时推荐）：
+```bash
+export API_RELOAD=true && python main.py
+```
+
 ### API接口
-- **POST /api/tests**：提交新的算法测试请求
-- **GET /api/tests/{task_id}**：获取测试任务状态
-- **GET /api/tests/{task_id}/report**：获取测试报告
-- **GET /api/tests**：获取所有测试任务列表
-- **GET /api/tests/{task_id}/cases**：获取测试任务的测试用例列表
-- **POST /api/tests/{task_id}/generate-cases**：为指定测试任务重新生成测试用例
-- **POST /api/generate-testcases**：直接从需求文档生成测试用例，不创建测试任务
+- **POST /api/generate-testcases**：直接从需求文档生成测试用例
 
 ### 测试用例生成功能
 
-系统能够自动分析算法需求文档，生成测试用例。测试用例生成过程如下：
-
-1. 用户通过 `POST /api/tests` 接口提交测试请求，包含算法需求文档路径和算法镜像名称
-2. 系统在后台启动分析Agent，读取需求文档内容
-3. 分析Agent使用大模型分析需求文档，生成测试用例
-4. 生成的测试用例保存到数据库中
-5. 用户可以通过 `GET /api/tests/{task_id}/cases` 接口获取生成的测试用例列表
-6. 如果需要重新生成测试用例，可以使用 `POST /api/tests/{task_id}/generate-cases` 接口
+系统能够自动分析算法需求文档，生成测试用例。
 
 测试用例包含以下信息：
 - 测试名称：简短描述测试内容
@@ -90,38 +78,42 @@ python main.py
 - 预期结果：测试应该产生什么结果
 - 验证方法：如何验证测试结果
 
-### 直接生成测试用例
+### 生成测试用例
 
-如果只需要生成测试用例，而不需要创建测试任务，可以使用 `POST /api/generate-testcases` 接口：
+使用 `POST /api/generate-testcases` 接口：
 
 1. 将算法需求文档（PDF格式）放置在 `data/pdfs/` 目录下
 2. 发送POST请求到 `/api/generate-testcases`，请求体包含 `doc_path` 参数，指定需求文档的相对路径
-3. 系统会直接返回生成的测试用例列表，不会创建测试任务或保存到数据库
+3. 系统会直接返回生成的测试用例列表
 
 示例请求：
 ```json
 {
-  "doc_path": "algorithm_requirement.pdf"
+  "doc_path": "需求文档.pdf"
 }
 ```
 
 示例响应：
 ```json
 {
-  "message": "成功从文档生成10个测试用例",
+  "message": "成功从文档生成8个测试用例",
   "test_cases": [
     {
-      "id": "TC_20250304_123456",
-      "name": "测试参数A的默认值",
-      "purpose": "验证参数A在未设置时使用默认值",
-      "steps": "不设置参数A，直接运行算法",
-      "expected_result": "算法使用参数A的默认值10进行计算",
-      "validation_method": "检查输出结果中的计算值是否基于默认值10"
+      "id": "TC1741059293_f1f741f10322",
+      "name": "验证未佩戴面罩报警逻辑",
+      "purpose": "验证算法在识别到人员未佩戴面罩时是否能够正确触发报警。",
+      "steps": "设置参数 `visual_object=true`，`used_time_switch=true`，`alert_time_thresh=3`...",
+      "expected_result": "输出结果中的 `algorithm_data.is_alert` 应为 `true`...",
+      "validation_method": "检查输出结果中的 `algorithm_data.is_alert` 字段，确认其值为 `true`。"
     },
     // 更多测试用例...
   ]
 }
 ```
+
+## API文档
+
+系统提供了Swagger UI文档，可以通过访问 `http://localhost:8000/api/docs` 查看和测试API接口。
 
 ## 开发指南
 
