@@ -61,60 +61,54 @@ export API_RELOAD=true && python main.py
 ```
 
 ### API接口
-- **POST /api/generate-testcases**：上传需求文档并生成测试用例
 
-### 测试用例生成功能
+#### 文档管理
+- **POST /api/documents**：上传需求文档
+  - 请求：multipart/form-data格式，包含PDF文件
+  - 响应：返回文档ID和存储路径
 
-系统能够自动分析算法需求文档，生成测试用例。
+#### 测试用例生成
+- **POST /api/documents/{document_id}/analyze**：分析文档并生成测试用例
+  - 请求：文档ID
+  - 响应：返回生成的测试用例列表
+
+- **POST /api/generate-testcases**：直接从上传文档生成测试用例
+  - 请求：multipart/form-data格式，包含PDF文件
+  - 响应：返回生成的测试用例列表
+
+#### 测试用例管理
+- **GET /api/testcases**：获取测试用例列表
+  - 参数：document_id（可选，按文档ID筛选）
+  - 响应：返回测试用例列表
+
+- **GET /api/testcases/{case_id}**：获取单个测试用例详情
+  - 参数：case_id（测试用例ID）
+  - 响应：返回测试用例详情
+
+- **POST /api/testcases**：创建新的测试用例
+  - 请求体：包含测试用例信息（名称、目的、步骤、预期结果、验证方法、所属文档ID）
+  - 响应：返回创建的测试用例
+
+- **PUT /api/testcases/{case_id}**：更新测试用例
+  - 请求体：包含要更新的测试用例字段
+  - 响应：返回更新后的测试用例
+
+- **DELETE /api/testcases/{case_id}**：删除测试用例
+  - 参数：case_id（测试用例ID）
+  - 响应：返回删除结果
+
+### 测试用例数据结构
 
 测试用例包含以下信息：
-- 测试名称：简短描述测试内容
-- 测试目的：详细说明测试什么功能或参数
-- 测试步骤：如何执行测试，包括具体的参数设置
-- 预期结果：测试应该产生什么结果
-- 验证方法：如何验证测试结果
+- **id**: 测试用例唯一标识
+- **document_id**: 所属文档ID
+- **name**: 测试名称
+- **purpose**: 测试目的
+- **steps**: 测试步骤
+- **expected_result**: 预期结果
+- **validation_method**: 验证方法
 
-### 生成测试用例
-
-使用 `POST /api/generate-testcases` 接口：
-
-1. 准备算法需求文档（PDF格式）
-2. 发送POST请求到 `/api/generate-testcases`，使用multipart/form-data格式上传PDF文件
-3. 系统会直接返回生成的测试用例列表
-
-示例请求：
-```
-POST /api/generate-testcases HTTP/1.1
-Host: localhost:8000
-Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
-
-------WebKitFormBoundary7MA4YWxkTrZu0gW
-Content-Disposition: form-data; name="file"; filename="需求文档.pdf"
-Content-Type: application/pdf
-
-(二进制PDF文件内容)
-------WebKitFormBoundary7MA4YWxkTrZu0gW--
-```
-
-示例响应：
-```json
-{
-  "message": "成功从文档生成8个测试用例",
-  "test_cases": [
-    {
-      "id": "TC1741059293_f1f741f10322",
-      "name": "验证未佩戴面罩报警逻辑",
-      "purpose": "验证算法在识别到人员未佩戴面罩时是否能够正确触发报警。",
-      "steps": "设置参数 `visual_object=true`，`used_time_switch=true`，`alert_time_thresh=3`...",
-      "expected_result": "输出结果中的 `algorithm_data.is_alert` 应为 `true`...",
-      "validation_method": "检查输出结果中的 `algorithm_data.is_alert` 字段，确认其值为 `true`。"
-    },
-    // 更多测试用例...
-  ]
-}
-```
-
-## API文档
+### API文档
 
 系统提供了Swagger UI文档，可以通过访问 `http://localhost:8000/api/docs` 查看和测试API接口。
 

@@ -54,6 +54,7 @@ class TestCase(Base):
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(String(50), ForeignKey("test_tasks.task_id", ondelete="CASCADE"))
     case_id = Column(String(50), unique=True, index=True)
+    document_id = Column(String(50), index=True)
     input_data = Column(JSON)
     expected_output = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -98,36 +99,50 @@ class TestReport(Base):
 def init_db():
     """初始化数据库，创建所有表"""
     logger.info("初始化数据库...")
+    # 删除所有现有的表
+    Base.metadata.drop_all(bind=engine)
+    # 创建所有表
     Base.metadata.create_all(bind=engine)
     logger.info("数据库初始化完成")
 
-@contextmanager
-def get_db():
+def get_db() -> Session:
     """获取数据库会话"""
     db = SessionLocal()
     try:
-        yield db
-    finally:
+        return db
+    except Exception as e:
+        logger.error(f"获取数据库会话失败: {str(e)}")
         db.close()
+        raise
 
 # 数据库操作函数
-def create_test_task(task_data: Dict[str, Any]) -> TestTask:
+def create_test_task(task_data: Dict[str, Any], db: Session = None) -> TestTask:
     """
     创建测试任务
     
     Args:
         task_data: 测试任务数据
+        db: 数据库会话，如果不提供则创建新会话
         
     Returns:
         TestTask: 创建的测试任务对象
     """
-    with get_db() as db:
+    if db is None:
+        db = get_db()
+    try:
         task = TestTask(**task_data)
         db.add(task)
         db.commit()
         db.refresh(task)
         logger.info(f"创建测试任务: {task.task_id}")
         return task
+    except Exception as e:
+        db.rollback()
+        logger.error(f"创建测试任务失败: {str(e)}")
+        raise
+    finally:
+        if db and not db._is_external:
+            db.close()
 
 def get_test_task(task_id: str) -> Optional[TestTask]:
     """
@@ -164,23 +179,33 @@ def update_test_task(task_id: str, update_data: Dict[str, Any]) -> Optional[Test
             logger.info(f"更新测试任务: {task_id}")
         return task
 
-def create_test_case(case_data: Dict[str, Any]) -> TestCase:
+def create_test_case(case_data: Dict[str, Any], db: Session = None) -> TestCase:
     """
     创建测试用例
     
     Args:
         case_data: 测试用例数据
+        db: 数据库会话，如果不提供则创建新会话
         
     Returns:
         TestCase: 创建的测试用例对象
     """
-    with get_db() as db:
+    if db is None:
+        db = get_db()
+    try:
         case = TestCase(**case_data)
         db.add(case)
         db.commit()
         db.refresh(case)
         logger.info(f"创建测试用例: {case.case_id}")
         return case
+    except Exception as e:
+        db.rollback()
+        logger.error(f"创建测试用例失败: {str(e)}")
+        raise
+    finally:
+        if db and not db._is_external:
+            db.close()
 
 def create_test_result(result_data: Dict[str, Any]) -> TestResult:
     """
