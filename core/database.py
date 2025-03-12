@@ -97,13 +97,20 @@ class TestReport(Base):
     task = relationship("TestTask", back_populates="test_report")
 
 def init_db():
-    """初始化数据库，创建所有表"""
+    """初始化数据库，创建所有表（警告：会删除所有现有数据）"""
     logger.info("初始化数据库...")
     # 删除所有现有的表
     Base.metadata.drop_all(bind=engine)
     # 创建所有表
     Base.metadata.create_all(bind=engine)
     logger.info("数据库初始化完成")
+
+def ensure_db():
+    """确保数据库表存在，但不删除现有数据"""
+    logger.info("检查数据库表结构...")
+    # 只创建不存在的表，不会删除或修改现有的表
+    Base.metadata.create_all(bind=engine)
+    logger.info("数据库表结构检查完成")
 
 def get_db() -> Session:
     """获取数据库会话"""

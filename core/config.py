@@ -6,9 +6,9 @@
 开发规划：使用pydantic-settings从环境变量和.env文件加载配置，提供统一的配置访问接口
 """
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict, Any, List
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """

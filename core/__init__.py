@@ -10,6 +10,7 @@ from core.config import get_settings, Settings, get_llm_config
 from core.logger import setup_logging, get_logger
 from core.database import (
     init_db, 
+    ensure_db,
     get_db, 
     TestTask, 
     TestCase, 
@@ -48,6 +49,7 @@ __all__ = [
     
     # 数据库
     'init_db',
+    'ensure_db',
     'get_db',
     'TestTask',
     'TestCase',

@@ -8,7 +8,7 @@
 
 import uvicorn
 from fastapi import FastAPI
-from core import setup_logging, init_db, get_settings
+from core import setup_logging, ensure_db, get_settings
 from api import app
 
 def main():
@@ -18,8 +18,8 @@ def main():
     # 设置日志
     setup_logging()
     
-    # 初始化数据库
-    init_db()
+    # 确保数据库表存在（不会删除现有数据）
+    ensure_db()
     
     # 获取配置
     settings = get_settings()
