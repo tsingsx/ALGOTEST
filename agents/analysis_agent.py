@@ -364,6 +364,7 @@ def save_to_database(state: AnalysisState) -> AnalysisState:
             "task_id": state["task_id"],
             "requirement_doc": state.get("pdf_content", ""),
             "algorithm_image": state["algorithm_image"],
+            "dataset_url": state.get("dataset_url"),
             "status": "created"
         }
         

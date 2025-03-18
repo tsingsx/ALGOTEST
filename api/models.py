@@ -40,6 +40,18 @@ class DocumentAnalysisRequest(BaseModel):
     document_id: str = Field(description="文档ID")
 
 
+class AlgorithmImageRequest(BaseModel):
+    """算法镜像请求模型"""
+    document_id: str = Field(description="文档ID")
+    algorithm_image: str = Field(description="算法镜像地址")
+
+
+class DatasetUrlRequest(BaseModel):
+    """数据集地址请求模型"""
+    document_id: str = Field(description="文档ID")
+    dataset_url: str = Field(description="数据集地址")
+
+
 class TestCaseCreateRequest(BaseModel):
     """测试用例创建请求模型"""
     name: str = Field(description="测试名称")

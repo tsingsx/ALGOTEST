@@ -67,6 +67,19 @@ export API_RELOAD=true && python main.py
   - 请求：multipart/form-data格式，包含PDF文件
   - 响应：返回文档ID和存储路径
 
+#### 算法镜像和数据集管理
+- **POST /api/documents/{document_id}/algorithm-image**：上传算法镜像地址
+  - 请求：JSON格式，包含document_id和algorithm_image字段
+  - 响应：返回更新成功的消息
+
+- **POST /api/documents/{document_id}/dataset-url**：上传数据集地址
+  - 请求：JSON格式，包含document_id和dataset_url字段
+  - 响应：返回更新成功的消息
+
+- **GET /api/documents/{document_id}/task-info**：获取文档关联的任务信息
+  - 请求：文档ID
+  - 响应：返回文档关联的任务信息，包括算法镜像地址和数据集URL
+
 #### 测试用例生成
 - **POST /api/documents/{document_id}/analyze**：分析文档并生成测试用例
   - 请求：文档ID

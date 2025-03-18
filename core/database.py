@@ -38,6 +38,7 @@ class TestTask(Base):
     task_id = Column(String(50), unique=True, index=True)
     requirement_doc = Column(Text)
     algorithm_image = Column(String(255))
+    dataset_url = Column(String(255), nullable=True)  # 数据集URL
     status = Column(String(20), default="pending")  # pending, running, completed, failed
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -134,8 +135,10 @@ def create_test_task(task_data: Dict[str, Any], db: Session = None) -> TestTask:
     Returns:
         TestTask: 创建的测试任务对象
     """
+    close_db = False
     if db is None:
-        db = get_db()
+        db = SessionLocal()
+        close_db = True
     try:
         task = TestTask(**task_data)
         db.add(task)
@@ -148,7 +151,7 @@ def create_test_task(task_data: Dict[str, Any], db: Session = None) -> TestTask:
         logger.error(f"创建测试任务失败: {str(e)}")
         raise
     finally:
-        if db and not db._is_external:
+        if close_db:
             db.close()
 
 def get_test_task(task_id: str) -> Optional[TestTask]:
@@ -197,8 +200,10 @@ def create_test_case(case_data: Dict[str, Any], db: Session = None) -> TestCase:
     Returns:
         TestCase: 创建的测试用例对象
     """
+    close_db = False
     if db is None:
-        db = get_db()
+        db = SessionLocal()
+        close_db = True
     try:
         case = TestCase(**case_data)
         db.add(case)
@@ -211,7 +216,7 @@ def create_test_case(case_data: Dict[str, Any], db: Session = None) -> TestCase:
         logger.error(f"创建测试用例失败: {str(e)}")
         raise
     finally:
-        if db and not db._is_external:
+        if close_db:
             db.close()
 
 def create_test_result(result_data: Dict[str, Any]) -> TestResult:
