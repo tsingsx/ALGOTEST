@@ -23,9 +23,16 @@ from core.database import (
     TestCase as DBTestCase,
     TestTask as DBTestTask,
     Session,
-    update_test_task
+    update_test_task,
+    get_all_test_tasks,
+    get_test_task_by_document_id,
+    get_test_task,
+    update_task_algorithm_image as db_update_algorithm_image,
+    update_task_dataset_url as db_update_dataset_url,
+    close_task_session
 )
 from agents.analysis_agent import read_pdf_content, generate_test_cases as agent_generate_test_cases
+from agents.execution_agent import setup_algorithm_container
 from api.models import (
     TestCase, 
     TestCasesResponse, 
@@ -35,7 +42,10 @@ from api.models import (
     TestCaseUpdateRequest,
     MessageResponse,
     AlgorithmImageRequest,
-    DatasetUrlRequest
+    DatasetUrlRequest,
+    TestTaskItem,
+    TestTasksResponse,
+    DockerSetupResponse
 )
 
 # 创建路由器
@@ -100,6 +110,7 @@ async def upload_document(
         task_id = generate_unique_id("TASK")
         task_data = {
             "task_id": task_id,
+            "document_id": document_id,  # 添加文档ID
             "requirement_doc": "",  # 暂时不保存文档内容，后续分析时会更新
             "algorithm_image": None,
             "dataset_url": None,
@@ -175,6 +186,7 @@ async def analyze_document(
             task_id = generate_unique_id("TASK")
             task_data = {
                 "task_id": task_id,
+                "document_id": document_id,  # 添加文档ID
                 "requirement_doc": "",  # 暂时不保存文档内容
                 "algorithm_image": "auto_generated",
                 "status": "created"
@@ -461,10 +473,14 @@ async def generate_testcases_from_doc(
             temp_file.write(content)
             temp_file_path = temp_file.name
         
+        # 生成唯一文档ID
+        document_id = generate_unique_id("DOC")
+        
         # 创建测试任务
         task_id = generate_unique_id("TASK")
         task_data = {
             "task_id": task_id,
+            "document_id": document_id,  # 添加文档ID
             "requirement_doc": "",  # 暂时不保存文档内容
             "algorithm_image": "auto_generated",
             "status": "created"
@@ -519,7 +535,7 @@ async def generate_testcases_from_doc(
             case_data = {
                 "task_id": task_id,
                 "case_id": case["id"],
-                "document_id": task_id,
+                "document_id": document_id,
                 "input_data": {
                     "name": case["name"],
                     "purpose": case["purpose"],
@@ -554,215 +570,65 @@ async def generate_testcases_from_doc(
 
 
 # 添加算法镜像地址
-@router.post("/documents/{document_id}/algorithm-image", response_model=MessageResponse)
-async def upload_algorithm_image(
-    document_id: str = Path(..., description="文档ID"),
+@router.post("/tasks/{task_id}/algorithm-image", response_model=MessageResponse)
+async def update_task_algorithm_image(
+    task_id: str = Path(..., description="任务ID"),
     request: AlgorithmImageRequest = Body(..., description="算法镜像信息"),
     db: Session = Depends(get_db)
 ):
     """
-    上传算法镜像地址
+    通过任务ID更新算法镜像地址
     
-    - **document_id**: 文档ID
-    - **algorithm_image**: 算法镜像地址
+    - **task_id**: 任务ID
+    - **request**: 包含算法镜像地址的请求
     
-    返回更新成功消息
+    返回成功消息
     """
-    # 检查文档是否存在
-    pdf_dir = "data/pdfs"
-    matching_files = [f for f in os.listdir(pdf_dir) if f.startswith(document_id)]
-    
-    if not matching_files:
-        raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
-    
-    log.info(f"开始上传算法镜像地址: 文档ID={document_id}, 镜像={request.algorithm_image}")
+    log.info(f"开始更新任务的算法镜像地址: {request.algorithm_image}, 任务ID: {task_id}")
     
     try:
-        # 查找与文档关联的测试任务
-        query = db.query(DBTestTask)
+        # 使用专用函数更新算法镜像地址
+        task = db_update_algorithm_image(task_id, request.algorithm_image)
         
-        # 先查找该文档对应的测试用例
-        test_cases = db.query(DBTestCase).filter(DBTestCase.document_id == document_id).all()
-        if test_cases:
-            # 如果有测试用例，获取这些用例关联的任务
-            task_ids = set(case.task_id for case in test_cases)
-            if task_ids:
-                # 更新这些任务的算法镜像地址
-                for task_id in task_ids:
-                    task = db.query(DBTestTask).filter(DBTestTask.task_id == task_id).first()
-                    if task:
-                        task.algorithm_image = request.algorithm_image
-                        log.info(f"更新任务 {task_id} 的算法镜像地址为 {request.algorithm_image}")
-                db.commit()
-                return {"message": f"已更新{len(task_ids)}个测试任务的算法镜像地址: {request.algorithm_image}"}
-        
-        # 如果没有找到关联的任务，则尝试查找只有document_id但没有关联测试用例的任务
-        # 这种情况可能是先上传了文档，但还没有生成测试用例
-        
-        # 获取该文档ID对应的任务信息（从DOCUMENTS中）
-        doc_info = DOCUMENTS.get(document_id)
-        if doc_info:
-            # 查找或创建与该文档相关联的任务
-            task = None
-            # 检查是否有已创建的任务保存在DOCUMENTS中
-            if 'task_id' in doc_info:
-                task = db.query(DBTestTask).filter(DBTestTask.task_id == doc_info['task_id']).first()
-            
-            if task:
-                # 如果找到了任务，更新它
-                task.algorithm_image = request.algorithm_image
-                log.info(f"更新文档 {document_id} 关联的任务 {task.task_id} 的算法镜像地址")
-            else:
-                # 如果没有找到任务，创建一个新的
-                task_id = generate_unique_id("TASK")
-                task_data = {
-                    "task_id": task_id,
-                    "requirement_doc": "",  # 暂时不保存文档内容
-                    "algorithm_image": request.algorithm_image,
-                    "status": "created"
-                }
-                task = DBTestTask(**task_data)
-                db.add(task)
-                # 保存任务ID到文档信息中
-                doc_info['task_id'] = task_id
-                log.info(f"为文档 {document_id} 创建新任务 {task_id} 并设置算法镜像地址")
-            
-            db.commit()
-            return {"message": f"算法镜像地址已成功保存: {request.algorithm_image}"}
+        if task:
+            log.info(f"更新任务 {task_id} 的算法镜像地址")
+            return {"message": f"算法镜像地址已成功更新: {request.algorithm_image}"}
         else:
-            # 如果没有找到文档信息，创建一个新的任务
-            task_id = generate_unique_id("TASK")
-            task_data = {
-                "task_id": task_id,
-                "requirement_doc": "",
-                "algorithm_image": request.algorithm_image,
-                "status": "created"
-            }
-            task = DBTestTask(**task_data)
-            db.add(task)
-            db.commit()
-            
-            # 创建文档信息并保存任务ID
-            DOCUMENTS[document_id] = {
-                'id': document_id,
-                'task_id': task_id,
-                'filename': f"unknown_{document_id}.pdf",
-                'file_path': f"data/pdfs/{document_id}_unknown.pdf"
-            }
-            
-            log.info(f"为文档 {document_id} 创建新任务 {task_id} 并设置算法镜像地址")
-            return {"message": f"算法镜像地址已成功保存: {request.algorithm_image}"}
-        
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
     except Exception as e:
-        db.rollback()
-        log.error(f"上传算法镜像地址异常: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"上传算法镜像地址异常: {str(e)}")
+        log.error(f"更新算法镜像地址异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新算法镜像地址异常: {str(e)}")
 
 
 # 添加数据集地址
-@router.post("/documents/{document_id}/dataset-url", response_model=MessageResponse)
-async def upload_dataset_url(
-    document_id: str = Path(..., description="文档ID"),
+@router.post("/tasks/{task_id}/dataset-url", response_model=MessageResponse)
+async def update_task_dataset_url(
+    task_id: str = Path(..., description="任务ID"),
     request: DatasetUrlRequest = Body(..., description="数据集信息"),
     db: Session = Depends(get_db)
 ):
     """
-    上传数据集地址
+    通过任务ID更新数据集地址
     
-    - **document_id**: 文档ID
-    - **dataset_url**: 数据集地址
+    - **task_id**: 任务ID
+    - **request**: 包含数据集地址的请求
     
-    返回更新成功消息
+    返回成功消息
     """
-    # 检查文档是否存在
-    pdf_dir = "data/pdfs"
-    matching_files = [f for f in os.listdir(pdf_dir) if f.startswith(document_id)]
-    
-    if not matching_files:
-        raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
-    
-    log.info(f"开始上传数据集地址: 文档ID={document_id}, 数据集={request.dataset_url}")
+    log.info(f"开始更新任务的数据集地址: {request.dataset_url}, 任务ID: {task_id}")
     
     try:
-        # 查找与文档关联的测试任务
-        query = db.query(DBTestTask)
+        # 使用专用函数更新数据集URL
+        task = db_update_dataset_url(task_id, request.dataset_url)
         
-        # 先查找该文档对应的测试用例
-        test_cases = db.query(DBTestCase).filter(DBTestCase.document_id == document_id).all()
-        if test_cases:
-            # 如果有测试用例，获取这些用例关联的任务
-            task_ids = set(case.task_id for case in test_cases)
-            if task_ids:
-                # 更新这些任务的数据集地址
-                for task_id in task_ids:
-                    task = db.query(DBTestTask).filter(DBTestTask.task_id == task_id).first()
-                    if task:
-                        task.dataset_url = request.dataset_url
-                        log.info(f"更新任务 {task_id} 的数据集地址为 {request.dataset_url}")
-                db.commit()
-                return {"message": f"已更新{len(task_ids)}个测试任务的数据集地址: {request.dataset_url}"}
-        
-        # 如果没有找到关联的任务，则尝试查找只有document_id但没有关联测试用例的任务
-        # 这种情况可能是先上传了文档，但还没有生成测试用例
-        
-        # 获取该文档ID对应的任务信息（从DOCUMENTS中）
-        doc_info = DOCUMENTS.get(document_id)
-        if doc_info:
-            # 查找或创建与该文档相关联的任务
-            task = None
-            # 检查是否有已创建的任务保存在DOCUMENTS中
-            if 'task_id' in doc_info:
-                task = db.query(DBTestTask).filter(DBTestTask.task_id == doc_info['task_id']).first()
-            
-            if task:
-                # 如果找到了任务，更新它
-                task.dataset_url = request.dataset_url
-                log.info(f"更新文档 {document_id} 关联的任务 {task.task_id} 的数据集地址")
-            else:
-                # 如果没有找到任务，创建一个新的
-                task_id = generate_unique_id("TASK")
-                task_data = {
-                    "task_id": task_id,
-                    "requirement_doc": "",  # 暂时不保存文档内容
-                    "dataset_url": request.dataset_url,
-                    "status": "created"
-                }
-                task = DBTestTask(**task_data)
-                db.add(task)
-                # 保存任务ID到文档信息中
-                doc_info['task_id'] = task_id
-                log.info(f"为文档 {document_id} 创建新任务 {task_id} 并设置数据集地址")
-            
-            db.commit()
-            return {"message": f"数据集地址已成功保存: {request.dataset_url}"}
+        if task:
+            log.info(f"更新任务 {task_id} 的数据集地址")
+            return {"message": f"数据集地址已成功更新: {request.dataset_url}"}
         else:
-            # 如果没有找到文档信息，创建一个新的任务
-            task_id = generate_unique_id("TASK")
-            task_data = {
-                "task_id": task_id,
-                "requirement_doc": "",
-                "dataset_url": request.dataset_url,
-                "status": "created"
-            }
-            task = DBTestTask(**task_data)
-            db.add(task)
-            db.commit()
-            
-            # 创建文档信息并保存任务ID
-            DOCUMENTS[document_id] = {
-                'id': document_id,
-                'task_id': task_id,
-                'filename': f"unknown_{document_id}.pdf",
-                'file_path': f"data/pdfs/{document_id}_unknown.pdf"
-            }
-            
-            log.info(f"为文档 {document_id} 创建新任务 {task_id} 并设置数据集地址")
-            return {"message": f"数据集地址已成功保存: {request.dataset_url}"}
-        
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
     except Exception as e:
-        db.rollback()
-        log.error(f"上传数据集地址异常: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"上传数据集地址异常: {str(e)}")
+        log.error(f"更新数据集地址异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新数据集地址异常: {str(e)}")
 
 
 # 添加文档任务信息查询接口
@@ -846,3 +712,90 @@ async def get_document_task_info(
     except Exception as e:
         log.error(f"查询文档任务信息异常: {str(e)}")
         raise HTTPException(status_code=500, detail=f"查询文档任务信息异常: {str(e)}")
+
+
+@router.get("/tasks", response_model=TestTasksResponse)
+async def get_all_tasks():
+    """
+    获取所有测试任务
+    
+    返回数据库中所有测试任务的列表。
+    
+    Returns:
+        TestTasksResponse: 包含测试任务列表的响应
+    """
+    log.info("获取所有测试任务")
+    
+    try:
+        # 调用数据库函数获取所有测试任务
+        tasks = get_all_test_tasks()
+        
+        return TestTasksResponse(
+            message="成功获取所有测试任务",
+            tasks=tasks
+        )
+    except Exception as e:
+        log.error(f"获取所有测试任务失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取测试任务失败: {str(e)}"
+        )
+
+
+# 开始任务执行前准备Docker容器
+@router.post("/tasks/{task_id}/prepare", response_model=DockerSetupResponse)
+async def prepare_task_execution(
+    task_id: str = Path(..., description="任务ID")
+):
+    """
+    为测试任务执行准备Docker容器环境
+    
+    该接口会基于任务信息设置Docker容器，为后续的测试执行做准备。
+    它会从数据库获取algorithm_image和dataset_url，然后通过MCP在远程服务器上设置Docker容器。
+    
+    - **task_id**: 任务ID
+    
+    返回Docker容器设置结果
+    """
+    log.info(f"开始为任务 {task_id} 准备Docker环境")
+    
+    try:
+        # 获取任务信息验证
+        task = get_test_task(task_id)
+        if not task:
+            log.error(f"任务不存在: {task_id}")
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+            
+        if not task.algorithm_image:
+            log.error(f"任务 {task_id} 未配置算法镜像")
+            raise HTTPException(status_code=400, detail=f"未配置算法镜像，请先设置算法镜像")
+        
+        # 调用执行函数设置Docker容器
+        log.info(f"开始为任务 {task_id} 设置Docker容器，算法镜像: {task.algorithm_image}")
+        result = await setup_algorithm_container(task_id)
+        
+        log.info(f"Docker容器设置结果: success={result.get('success')}")
+        
+        # 返回响应
+        if result.get("success"):
+            log.success(f"Docker容器设置成功: {result.get('container_name')}")
+            return {
+                "message": "Docker容器设置成功",
+                "success": True,
+                "task_id": task_id,
+                "container_name": result.get("container_name"),
+                "error": None
+            }
+        else:
+            error_message = result.get("error", "未知错误")
+            log.error(f"Docker容器设置失败: {error_message}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Docker容器设置失败: {error_message}"
+            )
+    except HTTPException:
+        # 直接重新抛出HTTP异常
+        raise
+    except Exception as e:
+        log.error(f"准备Docker环境失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"准备Docker环境失败: {str(e)}")

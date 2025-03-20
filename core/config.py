@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, validation_alias="API_PORT")
     api_workers: int = Field(default=4, validation_alias="API_WORKERS")
     api_timeout: int = Field(default=60, validation_alias="API_TIMEOUT")
-    api_reload: bool = Field(default=False, validation_alias="API_RELOAD")
+    api_reload: bool = Field(default=True, validation_alias="API_RELOAD")
     
     # 数据库配置
     db_url: str = Field(default="sqlite:///algotest.db", validation_alias="DB_URL")

@@ -68,12 +68,20 @@ export API_RELOAD=true && python main.py
   - 响应：返回文档ID和存储路径
 
 #### 算法镜像和数据集管理
-- **POST /api/documents/{document_id}/algorithm-image**：上传算法镜像地址
-  - 请求：JSON格式，包含document_id和algorithm_image字段
+- **POST /api/documents/{document_id}/algorithm-image**：通过文档ID更新算法镜像地址
+  - 请求：JSON格式，包含algorithm_image字段
   - 响应：返回更新成功的消息
 
-- **POST /api/documents/{document_id}/dataset-url**：上传数据集地址
-  - 请求：JSON格式，包含document_id和dataset_url字段
+- **POST /api/documents/{document_id}/dataset-url**：通过文档ID更新数据集地址
+  - 请求：JSON格式，包含dataset_url字段
+  - 响应：返回更新成功的消息
+
+- **POST /api/tasks/{task_id}/algorithm-image**：通过任务ID更新算法镜像地址
+  - 请求：JSON格式，包含algorithm_image字段
+  - 响应：返回更新成功的消息
+
+- **POST /api/tasks/{task_id}/dataset-url**：通过任务ID更新数据集地址
+  - 请求：JSON格式，包含dataset_url字段
   - 响应：返回更新成功的消息
 
 - **GET /api/documents/{document_id}/task-info**：获取文档关联的任务信息
@@ -124,6 +132,125 @@ export API_RELOAD=true && python main.py
 ### API文档
 
 系统提供了Swagger UI文档，可以通过访问 `http://localhost:8000/api/docs` 查看和测试API接口。
+
+### 测试任务管理
+
+#### 获取所有测试任务
+
+获取数据库中所有的测试任务列表。
+
+```
+GET /api/tasks
+```
+
+**响应示例**：
+
+```json
+{
+  "message": "成功获取所有测试任务",
+  "tasks": [
+    {
+      "id": 1,
+      "task_id": "TASK_123456",
+      "algorithm_image": "example/algorithm:v1.0",
+      "dataset_url": "http://example.com/dataset",
+      "status": "completed",
+      "created_at": "2025-03-18T12:30:45",
+      "updated_at": "2025-03-18T14:20:30",
+      "test_cases_count": 5
+    },
+    {
+      "id": 2,
+      "task_id": "TASK_789012",
+      "algorithm_image": "example/algorithm:v2.0",
+      "dataset_url": null,
+      "status": "pending",
+      "created_at": "2025-03-19T09:15:22",
+      "updated_at": "2025-03-19T09:15:22",
+      "test_cases_count": 0
+    }
+  ]
+}
+```
+
+### 任务执行和Docker管理
+
+#### 准备任务执行环境
+
+```
+POST /api/tasks/{task_id}/prepare
+```
+
+在执行测试任务前，准备Docker容器环境。该接口会根据任务信息设置Docker容器。
+
+**请求参数：**
+- **task_id** (路径参数): 测试任务ID
+
+**响应格式：**
+```json
+{
+  "success": true,
+  "task_id": "TASK_123456",
+  "container_name": "algotest_TASK_123456",
+  "algorithm_image": "example/algorithm:v1.0",
+  "dataset_url": "http://example.com/dataset"
+}
+```
+
+#### 设置算法Docker容器
+
+```
+POST /api/tasks/{task_id}/docker/setup
+```
+
+通过MCP在远程服务器上设置Docker容器，拉取算法镜像并启动容器。
+
+**请求参数：**
+- **task_id** (路径参数): 测试任务ID
+
+**响应格式：**
+```json
+{
+  "success": true,
+  "task_id": "TASK_123456",
+  "container_name": "algotest_TASK_123456",
+  "algorithm_image": "example/algorithm:v1.0",
+  "dataset_url": "http://example.com/dataset"
+}
+```
+
+#### 在Docker容器中执行命令
+
+```
+POST /api/tasks/{task_id}/docker/exec
+```
+
+通过MCP在远程服务器的Docker容器中执行命令
+
+**请求参数：**
+- **task_id** (路径参数): 测试任务ID
+- **command** (请求体): 要执行的命令
+
+**请求体格式：**
+```json
+{
+  "command": "ls -la /data"
+}
+```
+
+**响应格式：**
+```json
+{
+  "success": true,
+  "task_id": "TASK_123456",
+  "container_name": "algotest_TASK_123456",
+  "command": "ls -la /data",
+  "result": {
+    "stdout": "命令执行结果...",
+    "stderr": ""
+  }
+}
+```
 
 ## 开发指南
 

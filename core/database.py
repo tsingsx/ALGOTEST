@@ -36,6 +36,7 @@ class TestTask(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(String(50), unique=True, index=True)
+    document_id = Column(String(50), index=True, nullable=True)  # 添加文档ID字段
     requirement_doc = Column(Text)
     algorithm_image = Column(String(255))
     dataset_url = Column(String(255), nullable=True)  # 数据集URL
@@ -164,8 +165,30 @@ def get_test_task(task_id: str) -> Optional[TestTask]:
     Returns:
         TestTask: 测试任务对象，不存在返回None
     """
-    with get_db() as db:
+    db = SessionLocal()
+    try:
         task = db.query(TestTask).filter(TestTask.task_id == task_id).first()
+        if task:
+            # 保持数据库会话，不要关闭
+            setattr(task, "_session", db)  # 附加会话到对象，防止会话被回收
+        return task
+    except Exception as e:
+        logger.error(f"获取测试任务失败: {str(e)}")
+        db.close()
+        return None
+
+def get_test_task_by_document_id(document_id: str) -> Optional[TestTask]:
+    """
+    根据文档ID获取测试任务
+    
+    Args:
+        document_id: 文档ID
+        
+    Returns:
+        TestTask: 测试任务对象，不存在返回None
+    """
+    with get_db() as db:
+        task = db.query(TestTask).filter(TestTask.document_id == document_id).first()
         return task
 
 def update_test_task(task_id: str, update_data: Dict[str, Any]) -> Optional[TestTask]:
@@ -254,3 +277,138 @@ def create_test_report(report_data: Dict[str, Any]) -> TestReport:
         db.refresh(report)
         logger.info(f"创建测试报告: {report.task_id}")
         return report
+
+def get_all_test_tasks() -> List[Dict[str, Any]]:
+    """
+    获取所有测试任务
+    
+    Returns:
+        List[Dict[str, Any]]: 所有测试任务数据列表
+    """
+    with get_db() as db:
+        tasks = db.query(TestTask).all()
+        
+        # 转换为字典列表
+        result = []
+        for task in tasks:
+            task_dict = {
+                "id": task.id,
+                "task_id": task.task_id,
+                "document_id": task.document_id if task.document_id is not None else None,
+                "requirement_doc": task.requirement_doc if task.requirement_doc is not None else None,
+                "algorithm_image": task.algorithm_image if task.algorithm_image is not None else None,
+                "dataset_url": task.dataset_url if task.dataset_url is not None else None,
+                "status": task.status if task.status is not None else "unknown",
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+                "test_cases_count": len(task.test_cases) if task.test_cases else 0
+            }
+            result.append(task_dict)
+            
+        logger.info(f"获取所有测试任务，共{len(result)}条记录")
+        return result
+
+def update_test_case_status(case_id: str, status: str, result: Dict[str, Any] = None) -> Optional[TestCase]:
+    """
+    更新测试用例状态
+    
+    Args:
+        case_id: 测试用例ID
+        status: 状态 (pending, running, completed, failed)
+        result: 执行结果
+        
+    Returns:
+        TestCase: 更新后的测试用例对象，不存在返回None
+    """
+    with get_db() as db:
+        case = db.query(TestCase).filter(TestCase.case_id == case_id).first()
+        if not case:
+            logger.warning(f"更新状态失败，测试用例不存在: {case_id}")
+            return None
+        
+        # 创建或更新测试结果
+        test_result = db.query(TestResult).filter(TestResult.case_id == case_id).first()
+        
+        if status == "completed":
+            # 已完成状态，添加测试结果
+            if not test_result:
+                test_result = TestResult(
+                    task_id=case.task_id,
+                    case_id=case_id,
+                    actual_output=result.get("result") if result else None,
+                    is_passed=result.get("success", False) if result else False,
+                    error_message=result.get("error") if result and not result.get("success", False) else None,
+                    execution_time=0  # TODO: 计算执行时间
+                )
+                db.add(test_result)
+            else:
+                test_result.actual_output = result.get("result") if result else test_result.actual_output
+                test_result.is_passed = result.get("success", False) if result else test_result.is_passed
+                test_result.error_message = result.get("error") if result and not result.get("success", False) else test_result.error_message
+        
+        db.commit()
+        logger.info(f"更新测试用例状态: {case_id} -> {status}")
+        return case
+
+def update_test_task_status(task_id: str, status: str) -> Optional[TestTask]:
+    """
+    更新测试任务状态
+    
+    Args:
+        task_id: 测试任务ID
+        status: 状态 (pending, running, completed, failed)
+        
+    Returns:
+        TestTask: 更新后的测试任务对象，不存在返回None
+    """
+    with get_db() as db:
+        task = db.query(TestTask).filter(TestTask.task_id == task_id).first()
+        if task:
+            task.status = status
+            db.commit()
+            db.refresh(task)
+            logger.info(f"更新测试任务状态: {task_id} -> {status}")
+        else:
+            logger.warning(f"更新状态失败，测试任务不存在: {task_id}")
+        return task
+
+# 在数据库操作完成后需要关闭会话的函数
+def close_task_session(task: TestTask):
+    """
+    关闭与任务对象关联的数据库会话
+    
+    Args:
+        task: 测试任务对象
+    """
+    if task and hasattr(task, "_session"):
+        session = getattr(task, "_session")
+        session.close()
+        delattr(task, "_session")
+
+# 添加新的函数用于更新任务的算法镜像
+def update_task_algorithm_image(task_id: str, algorithm_image: str) -> Optional[TestTask]:
+    """
+    更新测试任务的算法镜像地址
+    
+    Args:
+        task_id: 测试任务ID
+        algorithm_image: 算法镜像地址
+        
+    Returns:
+        TestTask: 更新后的测试任务对象，不存在返回None
+    """
+    return update_test_task(task_id, {"algorithm_image": algorithm_image})
+
+# 添加新的函数用于更新任务的数据集URL
+def update_task_dataset_url(task_id: str, dataset_url: str) -> Optional[TestTask]:
+    """
+    更新测试任务的数据集URL
+    
+    Args:
+        task_id: 测试任务ID
+        dataset_url: 数据集URL
+        
+    Returns:
+        TestTask: 更新后的测试任务对象，不存在返回None
+    """
+    return update_test_task(task_id, {"dataset_url": dataset_url})

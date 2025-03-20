@@ -42,13 +42,11 @@ class DocumentAnalysisRequest(BaseModel):
 
 class AlgorithmImageRequest(BaseModel):
     """算法镜像请求模型"""
-    document_id: str = Field(description="文档ID")
     algorithm_image: str = Field(description="算法镜像地址")
 
 
 class DatasetUrlRequest(BaseModel):
     """数据集地址请求模型"""
-    document_id: str = Field(description="文档ID")
     dataset_url: str = Field(description="数据集地址")
 
 
@@ -75,3 +73,29 @@ class TestCaseUpdateRequest(BaseModel):
 class MessageResponse(BaseModel):
     """通用消息响应模型"""
     message: str = Field(description="响应消息")
+
+class TestTaskItem(BaseModel):
+    """测试任务项模型"""
+    id: int = Field(description="任务ID")
+    task_id: str = Field(description="任务唯一标识")
+    document_id: Optional[str] = Field(None, description="文档ID")
+    requirement_doc: Optional[str] = Field(None, description="需求文档内容")
+    algorithm_image: Optional[str] = Field(None, description="算法镜像")
+    dataset_url: Optional[str] = Field(None, description="数据集URL")
+    status: str = Field(description="任务状态")
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
+    test_cases_count: int = Field(description="测试用例数量")
+
+class TestTasksResponse(BaseModel):
+    """测试任务列表响应模型"""
+    message: str = Field(description="响应消息")
+    tasks: List[TestTaskItem] = Field(description="测试任务列表")
+
+class DockerSetupResponse(BaseModel):
+    """Docker容器设置响应模型"""
+    message: str = Field(description="响应消息")
+    success: bool = Field(description="是否成功")
+    task_id: str = Field(description="任务ID")
+    container_name: Optional[str] = Field(None, description="容器名称")
+    error: Optional[str] = Field(None, description="错误信息")
