@@ -12,7 +12,7 @@ import asyncio
 from typing import Dict, Any, List, Optional, Tuple, TypedDict
 from datetime import datetime
 from loguru import logger
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, END
 import zhipuai
 from dotenv import load_dotenv
 from mcp.client.session import ClientSession
@@ -51,10 +51,11 @@ class CommandStrategy(BaseModel):
 class ExecutionState(TypedDict):
     """执行Agent状态定义"""
     task_id: str  # 任务ID
-    case_id: str  # 测试用例ID
+    case_id: Optional[str]  # 测试用例ID，可选
     algorithm_image: str  # 算法镜像
     dataset_url: Optional[str]  # 数据集URL
-    test_case: Optional[Dict[str, Any]]  # 测试用例信息
+    test_cases: List[Dict[str, Any]]  # 测试用例列表
+    current_case_index: int  # 当前执行的测试用例索引
     command_strategy: Optional[CommandStrategy]  # 命令策略
     execution_result: Optional[Dict[str, Any]]  # 执行结果
     errors: List[str]  # 错误信息
@@ -295,9 +296,9 @@ class MCPClient:
             }
 
 
-def load_test_case(state: ExecutionState) -> ExecutionState:
+def load_test_cases(state: ExecutionState) -> ExecutionState:
     """
-    加载测试用例信息
+    按照task_id批量加载测试用例信息，如果提供了case_id则只加载指定用例
     
     Args:
         state: 当前状态
@@ -305,20 +306,41 @@ def load_test_case(state: ExecutionState) -> ExecutionState:
     Returns:
         更新后的状态
     """
-    log.info(f"开始加载测试用例: {state['case_id']}")
+    task_id = state['task_id']
+    case_id = state.get('case_id')
+    
+    if case_id:
+        log.info(f"开始加载指定的测试用例: 任务ID={task_id}, 用例ID={case_id}")
+    else:
+        log.info(f"开始加载任务 {task_id} 的所有测试用例")
     
     try:
         # 从数据库加载测试用例
         with get_db() as db:
-            # 获取测试用例信息
-            test_case = db.query("SELECT * FROM test_cases WHERE case_id = ?", [state['case_id']]).fetchone()
-            if not test_case:
-                raise ValueError(f"测试用例不存在: {state['case_id']}")
+            if case_id:
+                # 只加载指定的测试用例
+                test_case = db.query("SELECT * FROM test_cases WHERE case_id = ? AND task_id = ?", 
+                                    [case_id, task_id]).fetchone()
+                
+                if not test_case:
+                    raise ValueError(f"找不到指定的测试用例: 任务ID={task_id}, 用例ID={case_id}")
+                
+                test_cases = [test_case]
+                log.info(f"找到指定的测试用例: {case_id}")
+            else:
+                # 按task_id获取所有测试用例
+                test_cases = db.query("SELECT * FROM test_cases WHERE task_id = ?", [task_id]).fetchall()
+                
+                if not test_cases or len(test_cases) == 0:
+                    raise ValueError(f"任务 {task_id} 没有测试用例")
+                
+                log.info(f"找到 {len(test_cases)} 个测试用例")
             
             # 更新状态
             return {
                 **state,
-                "test_case": test_case,
+                "test_cases": test_cases,
+                "current_case_index": 0,  # 从第一个测试用例开始
                 "status": "loaded"
             }
     except Exception as e:
@@ -332,7 +354,7 @@ def load_test_case(state: ExecutionState) -> ExecutionState:
 
 async def parse_command(state: ExecutionState) -> ExecutionState:
     """
-    解析测试用例命令
+    解析测试用例命令 - 只使用智谱AI API进行解析，不连接MCP服务器
     
     Args:
         state: 当前状态
@@ -340,39 +362,45 @@ async def parse_command(state: ExecutionState) -> ExecutionState:
     Returns:
         更新后的状态
     """
-    log.info(f"开始解析命令: {state['case_id']}")
+    # 获取当前测试用例
+    current_index = state.get("current_case_index", 0)
+    test_cases = state.get("test_cases", [])
+    
+    if not test_cases or current_index >= len(test_cases):
+        return {
+            **state,
+            "errors": state.get("errors", []) + ["没有可执行的测试用例"],
+            "status": "error"
+        }
+    
+    # 获取当前测试用例
+    test_case = test_cases[current_index]
+    case_id = test_case.get("case_id")
+    
+    log.info(f"开始解析命令: 用例ID={case_id}, 索引={current_index+1}/{len(test_cases)}")
     
     try:
-        # 获取测试用例
-        test_case = state.get("test_case")
-        if not test_case:
-            raise ValueError("测试用例未加载")
-        
         # 获取测试步骤
         steps = test_case.get("input_data", {}).get("steps", "")
         if not steps:
             raise ValueError("测试步骤为空")
         
-        # 创建MCP客户端
-        client = MCPClient(MCP_HOST, MCP_PORT)
+        # 直接创建智谱AI客户端
+        ai_client = ZhipuAIClient(ZHIPU_API_KEY, ZHIPU_MODEL)
         
-        # 连接到MCP服务器
-        if not await client.connect():
-            raise Exception("无法连接到MCP服务器")
+        # 解析命令 - 不需要连接MCP服务器
+        log.info(f"使用智谱AI解析命令")
+        command_strategy = await ai_client.parse_command(steps, [])
         
-        try:
-            # 解析命令
-            command_strategy = await client.ai_client.parse_command(steps, [])
-            
-            # 更新状态
-            return {
-                **state,
-                "command_strategy": command_strategy,
-                "status": "parsed"
-            }
-        finally:
-            # 断开连接
-            await client.disconnect()
+        log.success(f"命令解析成功: {command_strategy.tool}")
+        
+        # 更新状态
+        return {
+            **state,
+            "case_id": case_id,  # 设置当前执行的case_id
+            "command_strategy": command_strategy,
+            "status": "parsed"
+        }
             
     except Exception as e:
         log.error(f"解析命令失败: {str(e)}")
@@ -393,7 +421,8 @@ async def execute_command(state: ExecutionState) -> ExecutionState:
     Returns:
         更新后的状态
     """
-    log.info(f"开始执行命令: {state['case_id']}")
+    case_id = state.get("case_id")
+    log.info(f"开始执行命令: 用例ID={case_id}")
     
     try:
         # 获取命令策略
@@ -455,9 +484,9 @@ async def execute_command(state: ExecutionState) -> ExecutionState:
         }
 
 
-def save_result(state: ExecutionState) -> ExecutionState:
+async def save_result(state: ExecutionState) -> ExecutionState:
     """
-    保存执行结果
+    保存执行结果，并决定是否继续执行下一个测试用例
     
     Args:
         state: 当前状态
@@ -465,7 +494,8 @@ def save_result(state: ExecutionState) -> ExecutionState:
     Returns:
         更新后的状态
     """
-    log.info(f"开始保存执行结果: {state['case_id']}")
+    case_id = state.get("case_id")
+    log.info(f"开始保存执行结果: 用例ID={case_id}")
     
     try:
         # 获取执行结果
@@ -477,24 +507,59 @@ def save_result(state: ExecutionState) -> ExecutionState:
         with get_db() as db:
             # 更新测试用例状态
             update_test_case_status(
-                case_id=state["case_id"],
+                case_id=case_id,
                 status="completed" if execution_result.get("success") else "failed",
                 result=execution_result
             )
+        
+        log.success(f"执行结果保存成功: 用例ID={case_id}")
+        
+        # 获取当前测试用例索引
+        current_index = state.get("current_case_index", 0)
+        test_cases = state.get("test_cases", [])
+        
+        # 检查是否还有下一个测试用例需要执行
+        if current_index + 1 < len(test_cases):
+            # 还有测试用例需要执行，更新索引并准备执行下一个
+            log.info(f"准备执行下一个测试用例，当前进度: {current_index + 1}/{len(test_cases)}")
+            next_state = {
+                **state,
+                "current_case_index": current_index + 1,
+                "case_id": None,  # 清除当前case_id
+                "command_strategy": None,  # 清除当前命令策略
+                "execution_result": None,  # 清除当前执行结果
+                "status": "next_case"  # 设置状态为下一个测试用例
+            }
             
-            # 更新测试任务状态
-            update_test_task_status(
-                task_id=state["task_id"],
-                status="completed" if execution_result.get("success") else "failed"
-            )
-        
-        log.success(f"执行结果保存成功: {state['case_id']}")
-        
-        # 更新状态
-        return {
-            **state,
-            "status": "saved"
-        }
+            # 调用parse_command函数解析下一个测试用例的命令
+            next_state = await parse_command(next_state)
+            
+            # 如果解析成功，继续执行命令
+            if next_state.get("status") == "parsed":
+                next_state = await execute_command(next_state)
+                
+                # 如果执行成功，递归调用save_result保存结果
+                if next_state.get("status") == "executed":
+                    return await save_result(next_state)
+            
+            # 如果过程中出现错误，返回错误状态
+            return next_state
+        else:
+            # 所有测试用例已执行完成，更新任务状态
+            with get_db() as db:
+                # 更新测试任务状态
+                update_test_task_status(
+                    task_id=state["task_id"],
+                    status="completed"
+                )
+            
+            log.success(f"所有测试用例执行完成: 任务ID={state['task_id']}, 共{len(test_cases)}个测试用例")
+            
+            # 更新状态
+            return {
+                **state,
+                "status": "completed"
+            }
     except Exception as e:
         log.error(f"保存执行结果失败: {str(e)}")
         return {
@@ -550,7 +615,7 @@ fi
 
 # 运行新容器
 echo "正在启动新容器: {container_name}"
-docker run --gpus=all -itd --privileged -v /etc/localtime:/etc/localtime:ro -e LANG=C.UTF-8 -e NVIDIA_VISIBLE_DEVICES=all -e CUDA_VISIBLE_DEVICES=all --name {container_name} {dataset_mount} {algorithm_image}
+docker run --gpus=all -itd --privileged -v /etc/localtime:/etc/localtime:ro -e LANG=C.UTF-8 --name {container_name} {dataset_mount} {algorithm_image}
 
 # 检查容器是否成功启动
 sleep 2
@@ -781,37 +846,55 @@ def create_execution_graph() -> StateGraph:
     
     # 添加节点
     execution_graph.add_node("setup_docker", setup_docker_for_workflow)
-    execution_graph.add_node("load_test_case", load_test_case)
+    execution_graph.add_node("load_test_cases", load_test_cases)
     execution_graph.add_node("parse_command", parse_command)
     execution_graph.add_node("execute_command", execute_command)
     execution_graph.add_node("save_result", save_result)
     
     # 添加边
-    execution_graph.add_edge("setup_docker", "load_test_case")
-    execution_graph.add_edge("load_test_case", "parse_command")
+    execution_graph.add_edge("setup_docker", "load_test_cases")
+    execution_graph.add_edge("load_test_cases", "parse_command")
     execution_graph.add_edge("parse_command", "execute_command")
     execution_graph.add_edge("execute_command", "save_result")
     
+    # 添加条件边 - 如果需要执行下一个测试用例，回到parse_command
+    execution_graph.add_conditional_edges(
+        "save_result",
+        lambda state: "parse_command" if state.get("status") == "next_case" else "end",
+        {
+            "parse_command": "parse_command",
+            "end": END
+        }
+    )
+    
     # 设置入口点和结束点
     execution_graph.set_entry_point("setup_docker")
-    execution_graph.set_finish_point("save_result")
     
     return execution_graph
 
 
-async def run_execution(task_id: str, case_id: str, algorithm_image: str, dataset_url: Optional[str] = None) -> Dict[str, Any]:
+async def run_execution(task_id: str, case_id: Optional[str] = None, algorithm_image: str = None, dataset_url: Optional[str] = None) -> Dict[str, Any]:
     """
     运行执行Agent
     
     Args:
         task_id: 任务ID
-        case_id: 测试用例ID
-        algorithm_image: 算法镜像
-        dataset_url: 数据集URL
+        case_id: 测试用例ID（可选），如果提供则只执行指定的测试用例
+        algorithm_image: 算法镜像（可选，如果不提供则从数据库获取）
+        dataset_url: 数据集URL（可选）
         
     Returns:
         执行结果
     """
+    # 如果没有提供算法镜像，则从数据库获取
+    if not algorithm_image:
+        task = get_test_task(task_id)
+        if not task:
+            raise ValueError(f"测试任务不存在: {task_id}")
+        algorithm_image = task.algorithm_image
+        if not algorithm_image:
+            raise ValueError(f"算法镜像未设置: {task_id}")
+    
     # 创建工作流图
     execution_graph = create_execution_graph()
     
@@ -824,7 +907,8 @@ async def run_execution(task_id: str, case_id: str, algorithm_image: str, datase
         "case_id": case_id,
         "algorithm_image": algorithm_image,
         "dataset_url": dataset_url,
-        "test_case": None,
+        "test_cases": [],
+        "current_case_index": 0,
         "command_strategy": None,
         "execution_result": None,
         "errors": [],
@@ -833,8 +917,8 @@ async def run_execution(task_id: str, case_id: str, algorithm_image: str, datase
     }
     
     # 运行工作流
-    log.info(f"开始运行执行Agent: {case_id}")
+    log.info(f"开始运行执行Agent: 任务ID={task_id}")
     result = execution_app.invoke(initial_state)
-    log.info(f"执行Agent运行完成: {case_id}, 状态: {result['status']}")
+    log.info(f"执行Agent运行完成: 任务ID={task_id}, 状态: {result['status']}")
     
     return result
