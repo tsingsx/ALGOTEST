@@ -89,7 +89,7 @@ def analyze_test_results(state: ReportState) -> ReportState:
                 {expected_output.get('validation_method', '无')}
                 
                 实际输出：
-                {actual_output or '无输出'}
+                {actual_output or '无输出'}，其中，前面的json体现配置信息，后面的json是模型输出的检测结果
                 
                 请提供以下内容：
                 1. 测试是否通过的判断（true/false）
@@ -176,3 +176,55 @@ def analyze_test_results(state: ReportState) -> ReportState:
             "errors": state.get("errors", []) + [str(e)],
             "status": "error"
         }
+
+def create_report_graph() -> StateGraph:
+    """
+    创建报告Agent工作流图
+    
+    Returns:
+        工作流图
+    """
+    # 创建工作流图
+    report_graph = StateGraph(ReportState)
+    
+    # 添加节点
+    report_graph.add_node("analyze_test_results", analyze_test_results)
+    
+    # 设置入口点和结束点
+    report_graph.set_entry_point("analyze_test_results")
+    report_graph.set_finish_point("analyze_test_results")
+    
+    return report_graph
+
+
+async def run_report_generation(task_id: str) -> Dict[str, Any]:
+    """
+    运行报告生成Agent
+    
+    Args:
+        task_id: 任务ID
+        
+    Returns:
+        生成结果
+    """
+    # 创建工作流图
+    report_graph = create_report_graph()
+    
+    # 编译工作流
+    report_app = report_graph.compile()
+    
+    # 创建初始状态
+    initial_state = {
+        "task_id": task_id,
+        "test_cases": None,
+        "analysis_results": None,
+        "errors": [],
+        "status": "created"
+    }
+    
+    # 运行工作流
+    log.info(f"开始运行报告生成Agent: {task_id}")
+    result = report_app.invoke(initial_state)
+    log.info(f"报告生成Agent运行完成: {task_id}, 状态: {result['status']}")
+    
+    return result

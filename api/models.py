@@ -116,3 +116,20 @@ class TestExecutionResponse(BaseModel):
     cases_failed: int = Field(description="失败的测试用例数")
     execution_time: float = Field(description="执行时间(秒)")
     error: Optional[str] = Field(None, description="错误信息")
+
+class TestAnalysisResult(BaseModel):
+    """测试分析结果模型"""
+    case_id: str = Field(description="测试用例ID")
+    name: str = Field(description="测试用例名称")
+    is_passed: Optional[bool] = Field(None, description="是否通过测试")
+    summary: str = Field(description="测试结果概述")
+    details: Dict[str, Any] = Field(description="详细分析结果", default_factory=dict)
+    execution_info: Dict[str, Any] = Field(description="执行信息", default_factory=dict)
+    output_summary: Optional[str] = Field(None, description="输出概要")
+
+class TestAnalysisResponse(BaseModel):
+    """测试分析响应模型"""
+    message: str = Field(description="响应消息")
+    task_id: str = Field(description="任务ID")
+    summary: Dict[str, Any] = Field(description="测试总结")
+    analysis_results: List[TestAnalysisResult] = Field(description="测试用例分析结果列表")

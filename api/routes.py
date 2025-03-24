@@ -56,7 +56,9 @@ from api.models import (
     TestTaskItem,
     TestTasksResponse,
     DockerSetupResponse,
-    TestExecutionResponse
+    TestExecutionResponse,
+    TestAnalysisResponse,
+    TestAnalysisResult
 )
 
 # 创建路由器
@@ -1250,3 +1252,118 @@ async def get_task_test_status(
     except Exception as e:
         log.error(f"查询任务测试状态失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"查询任务测试状态失败: {str(e)}")
+
+# 获取测试分析结果
+@router.get("/tasks/{task_id}/analysis", response_model=TestAnalysisResponse)
+async def get_task_analysis(
+    task_id: str = Path(..., description="任务ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取任务的测试分析结果，以结构化的格式返回详细的分析信息
+    
+    该接口返回指定任务的所有测试用例的分析结果，包括：
+    - 整体测试总结
+    - 每个测试用例的详细分析
+    - 执行信息和输出概要
+    
+    - **task_id**: 任务ID
+    
+    返回测试分析结果信息
+    """
+    log.info(f"获取任务测试分析结果: {task_id}")
+    
+    try:
+        # 获取任务信息
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+            
+        # 获取任务的所有测试用例
+        cases = db.query(DBTestCase).filter(DBTestCase.task_id == task_id).all()
+        
+        # 统计数据
+        total_cases = len(cases)
+        passed_cases = 0
+        failed_cases = 0
+        pending_cases = 0
+        
+        # 处理每个测试用例的分析结果
+        analysis_results = []
+        
+        for case in cases:
+            # 从input_data中获取测试用例信息
+            input_data = case.input_data or {}
+            name = input_data.get("name", "未命名测试用例")
+            purpose = input_data.get("purpose", "")
+            steps = input_data.get("steps", "")
+            
+            # 统计通过/失败数量
+            if case.status == "completed":
+                if case.is_passed:
+                    passed_cases += 1
+                else:
+                    failed_cases += 1
+            elif case.status == "pending":
+                pending_cases += 1
+            
+            # 解析实际输出
+            actual_output = case.actual_output or ""
+            output_summary = ""
+            if actual_output:
+                try:
+                    # 提取关键信息
+                    if "algorithm_data" in actual_output:
+                        output_data = json.loads(actual_output)
+                        algo_data = output_data.get("algorithm_data", {})
+                        output_summary = f"检测到 {algo_data.get('target_count', 0)} 个目标，" \
+                                      f"报警状态: {'是' if algo_data.get('is_alert') else '否'}"
+                except:
+                    output_summary = "输出解析失败"
+            
+            # 构建分析结果
+            result = TestAnalysisResult(
+                case_id=case.case_id,
+                name=name,
+                is_passed=case.is_passed,
+                summary="测试通过" if case.is_passed else "测试失败",
+                details={
+                    "测试目的": purpose,
+                    "测试步骤": steps,
+                    "预期结果": case.expected_output.get("expected_result", "") if case.expected_output else "",
+                    "验证方法": case.expected_output.get("validation_method", "") if case.expected_output else "",
+                    "分析结果": case.result_analysis or "暂无分析结果"
+                },
+                execution_info={
+                    "状态": case.status or "pending",
+                    "执行时间": None  # 移除对updated_at的引用
+                },
+                output_summary=output_summary
+            )
+            
+            analysis_results.append(result)
+        
+        # 计算成功率
+        success_rate = (passed_cases / total_cases * 100) if total_cases > 0 else 0
+        
+        # 组装响应
+        return TestAnalysisResponse(
+            message="成功获取测试分析结果",
+            task_id=task_id,
+            summary={
+                "total_cases": total_cases,
+                "passed_cases": passed_cases,
+                "failed_cases": failed_cases,
+                "pending_cases": pending_cases,
+                "success_rate": round(success_rate, 2),
+                "status": task.status,
+                "execution_time": task.updated_at.isoformat() if task.updated_at else None
+            },
+            analysis_results=analysis_results
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"获取任务测试分析结果失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取任务测试分析结果失败: {str(e)}")
