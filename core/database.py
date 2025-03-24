@@ -40,13 +40,13 @@ class TestTask(Base):
     requirement_doc = Column(Text)
     algorithm_image = Column(String(255))
     dataset_url = Column(String(255), nullable=True)  # 数据集URL
+    container_name = Column(String(255), nullable=True)  # 容器名称
     status = Column(String(20), default="pending")  # pending, running, completed, failed
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     # 关系
     test_cases = relationship("TestCase", back_populates="task", cascade="all, delete-orphan")
-    test_results = relationship("TestResult", back_populates="task", cascade="all, delete-orphan")
     test_report = relationship("TestReport", back_populates="task", uselist=False, cascade="all, delete-orphan")
 
 class TestCase(Base):
@@ -59,28 +59,17 @@ class TestCase(Base):
     document_id = Column(String(50), index=True)
     input_data = Column(JSON)
     expected_output = Column(JSON, nullable=True)
+    
+    # 从TestResult表移过来的字段
+    actual_output = Column(Text, nullable=True)  # 实际输出结果
+    result_analysis = Column(Text, nullable=True) # 结果分析
+    is_passed = Column(Boolean, default=False)   # 是否通过测试
+    status = Column(String(20), default="pending")  # pending, running, completed, failed
+    
     created_at = Column(DateTime, default=datetime.now)
     
     # 关系
     task = relationship("TestTask", back_populates="test_cases")
-    test_result = relationship("TestResult", back_populates="test_case", uselist=False, cascade="all, delete-orphan")
-
-class TestResult(Base):
-    """测试结果模型"""
-    __tablename__ = "test_results"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(String(50), ForeignKey("test_tasks.task_id", ondelete="CASCADE"))
-    case_id = Column(String(50), ForeignKey("test_cases.case_id", ondelete="CASCADE"))
-    actual_output = Column(JSON, nullable=True)
-    is_passed = Column(Boolean, default=False)
-    error_message = Column(Text, nullable=True)
-    execution_time = Column(Integer)  # 毫秒
-    created_at = Column(DateTime, default=datetime.now)
-    
-    # 关系
-    task = relationship("TestTask", back_populates="test_results")
-    test_case = relationship("TestCase", back_populates="test_result")
 
 class TestReport(Base):
     """测试报告模型"""
@@ -242,24 +231,6 @@ def create_test_case(case_data: Dict[str, Any], db: Session = None) -> TestCase:
         if close_db:
             db.close()
 
-def create_test_result(result_data: Dict[str, Any]) -> TestResult:
-    """
-    创建测试结果
-    
-    Args:
-        result_data: 测试结果数据
-        
-    Returns:
-        TestResult: 创建的测试结果对象
-    """
-    with get_db() as db:
-        result = TestResult(**result_data)
-        db.add(result)
-        db.commit()
-        db.refresh(result)
-        logger.info(f"创建测试结果: {result.case_id}")
-        return result
-
 def create_test_report(report_data: Dict[str, Any]) -> TestReport:
     """
     创建测试报告
@@ -298,6 +269,7 @@ def get_all_test_tasks() -> List[Dict[str, Any]]:
                 "requirement_doc": task.requirement_doc if task.requirement_doc is not None else None,
                 "algorithm_image": task.algorithm_image if task.algorithm_image is not None else None,
                 "dataset_url": task.dataset_url if task.dataset_url is not None else None,
+                "container_name": task.container_name if task.container_name is not None else None,
                 "status": task.status if task.status is not None else "unknown",
                 "created_at": task.created_at.isoformat() if task.created_at else None,
                 "updated_at": task.updated_at.isoformat() if task.updated_at else None,
@@ -308,14 +280,14 @@ def get_all_test_tasks() -> List[Dict[str, Any]]:
         logger.info(f"获取所有测试任务，共{len(result)}条记录")
         return result
 
-def update_test_case_status(case_id: str, status: str, result: Dict[str, Any] = None) -> Optional[TestCase]:
+def update_test_case_status(case_id: str, status: str, result: Any = None) -> Optional[TestCase]:
     """
-    更新测试用例状态
+    更新测试用例状态和结果
     
     Args:
         case_id: 测试用例ID
         status: 状态 (pending, running, completed, failed)
-        result: 执行结果
+        result: 执行结果，可以是文本或字典
         
     Returns:
         TestCase: 更新后的测试用例对象，不存在返回None
@@ -326,27 +298,34 @@ def update_test_case_status(case_id: str, status: str, result: Dict[str, Any] = 
             logger.warning(f"更新状态失败，测试用例不存在: {case_id}")
             return None
         
-        # 创建或更新测试结果
-        test_result = db.query(TestResult).filter(TestResult.case_id == case_id).first()
+        # 更新状态
+        case.status = status
         
-        if status == "completed":
-            # 已完成状态，添加测试结果
-            if not test_result:
-                test_result = TestResult(
-                    task_id=case.task_id,
-                    case_id=case_id,
-                    actual_output=result.get("result") if result else None,
-                    is_passed=result.get("success", False) if result else False,
-                    error_message=result.get("error") if result and not result.get("success", False) else None,
-                    execution_time=0  # TODO: 计算执行时间
-                )
-                db.add(test_result)
+        if status == "completed" or status == "failed":
+            # 判断result的类型，处理文本或字典类型
+            success = False
+            
+            if isinstance(result, dict):
+                # 如果是字典类型，尝试提取成功标志
+                success = result.get("success", False)
+            elif isinstance(result, str):
+                # 如果是字符串类型，作为原始输出保存
+                # 通过简单启发式检测执行是否成功（输出中不包含常见错误关键词）
+                error_keywords = ["错误", "Error", "Failed", "失败", "Exception", "异常"]
+                success = not any(keyword in result for keyword in error_keywords)
             else:
-                test_result.actual_output = result.get("result") if result else test_result.actual_output
-                test_result.is_passed = result.get("success", False) if result else test_result.is_passed
-                test_result.error_message = result.get("error") if result and not result.get("success", False) else test_result.error_message
+                # 其他类型，尝试转换为字符串
+                result = str(result) if result is not None else ""
+            
+            # 直接更新测试用例对象的字段
+            if result is not None:
+                case.actual_output = result
+                case.is_passed = success
+            
+            logger.info(f"更新测试结果: {case_id}")
         
         db.commit()
+        db.refresh(case)
         logger.info(f"更新测试用例状态: {case_id} -> {status}")
         return case
 
@@ -412,3 +391,17 @@ def update_task_dataset_url(task_id: str, dataset_url: str) -> Optional[TestTask
         TestTask: 更新后的测试任务对象，不存在返回None
     """
     return update_test_task(task_id, {"dataset_url": dataset_url})
+
+# 添加新的函数用于更新任务的容器名称
+def update_task_container_name(task_id: str, container_name: str) -> Optional[TestTask]:
+    """
+    更新测试任务的容器名称
+    
+    Args:
+        task_id: 测试任务ID
+        container_name: 容器名称
+        
+    Returns:
+        TestTask: 更新后的测试任务对象，不存在返回None
+    """
+    return update_test_task(task_id, {"container_name": container_name})

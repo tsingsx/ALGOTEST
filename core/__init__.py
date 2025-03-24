@@ -14,13 +14,11 @@ from core.database import (
     get_db, 
     TestTask, 
     TestCase, 
-    TestResult, 
     TestReport,
     create_test_task,
     get_test_task,
     update_test_task,
     create_test_case,
-    create_test_result,
     create_test_report
 )
 from core.utils import (
@@ -53,13 +51,11 @@ __all__ = [
     'get_db',
     'TestTask',
     'TestCase',
-    'TestResult',
     'TestReport',
     'create_test_task',
     'get_test_task',
     'update_test_task',
     'create_test_case',
-    'create_test_result',
     'create_test_report',
     
     # 工具

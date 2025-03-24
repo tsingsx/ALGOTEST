@@ -19,6 +19,10 @@ class TestCase(BaseModel):
     expected_result: str = Field(description="预期结果")
     validation_method: str = Field(description="验证方法")
     document_id: str = Field(description="所属文档ID")
+    actual_output: Optional[str] = Field(None, description="实际输出结果")
+    result_analysis: Optional[str] = Field(None, description="结果分析")
+    is_passed: Optional[bool] = Field(None, description="是否通过测试")
+    status: Optional[str] = Field("pending", description="执行状态")
 
 
 class TestCasesResponse(BaseModel):
@@ -82,6 +86,7 @@ class TestTaskItem(BaseModel):
     requirement_doc: Optional[str] = Field(None, description="需求文档内容")
     algorithm_image: Optional[str] = Field(None, description="算法镜像")
     dataset_url: Optional[str] = Field(None, description="数据集URL")
+    container_name: Optional[str] = Field(None, description="容器名称")
     status: str = Field(description="任务状态")
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")
@@ -98,4 +103,16 @@ class DockerSetupResponse(BaseModel):
     success: bool = Field(description="是否成功")
     task_id: str = Field(description="任务ID")
     container_name: Optional[str] = Field(None, description="容器名称")
+    error: Optional[str] = Field(None, description="错误信息")
+
+class TestExecutionResponse(BaseModel):
+    """测试执行响应模型"""
+    message: str = Field(description="响应消息")
+    success: bool = Field(description="是否成功")
+    task_id: str = Field(description="任务ID")
+    cases_total: int = Field(description="测试用例总数")
+    cases_executed: int = Field(description="已执行的测试用例数")
+    cases_passed: int = Field(description="通过的测试用例数")
+    cases_failed: int = Field(description="失败的测试用例数")
+    execution_time: float = Field(description="执行时间(秒)")
     error: Optional[str] = Field(None, description="错误信息")

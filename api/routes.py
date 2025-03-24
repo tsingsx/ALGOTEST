@@ -10,6 +10,7 @@ import os
 import json
 import shutil
 import tempfile
+import time
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Path, Query, Body, Depends
 from pydantic import BaseModel, Field
@@ -29,10 +30,19 @@ from core.database import (
     get_test_task,
     update_task_algorithm_image as db_update_algorithm_image,
     update_task_dataset_url as db_update_dataset_url,
-    close_task_session
+    update_task_container_name,
+    close_task_session,
+    update_test_case_status,
+    update_test_task_status
 )
 from agents.analysis_agent import read_pdf_content, generate_test_cases as agent_generate_test_cases
-from agents.execution_agent import setup_algorithm_container
+from agents.execution_agent import (
+    setup_algorithm_container, 
+    load_test_cases, 
+    parse_command, 
+    execute_command, 
+    save_result
+)
 from api.models import (
     TestCase, 
     TestCasesResponse, 
@@ -45,7 +55,8 @@ from api.models import (
     DatasetUrlRequest,
     TestTaskItem,
     TestTasksResponse,
-    DockerSetupResponse
+    DockerSetupResponse,
+    TestExecutionResponse
 )
 
 # 创建路由器
@@ -69,7 +80,11 @@ def format_test_case(case: DBTestCase) -> TestCase:
         steps=input_data.get("steps", ""),
         expected_result=expected_output.get("expected_result", ""),
         validation_method=expected_output.get("validation_method", ""),
-        document_id=case.document_id
+        document_id=case.document_id,
+        actual_output=case.actual_output,
+        result_analysis=case.result_analysis,
+        is_passed=case.is_passed,
+        status=case.status or "pending"
     )
 
 # 1. 文档上传接口
@@ -778,12 +793,18 @@ async def prepare_task_execution(
         
         # 返回响应
         if result.get("success"):
-            log.success(f"Docker容器设置成功: {result.get('container_name')}")
+            container_name = result.get("container_name")
+            log.success(f"Docker容器设置成功: {container_name}")
+            
+            # 更新任务的容器名称
+            log.info(f"更新任务 {task_id} 的容器名称: {container_name}")
+            update_task_container_name(task_id, container_name)
+            
             return {
                 "message": "Docker容器设置成功",
                 "success": True,
                 "task_id": task_id,
-                "container_name": result.get("container_name"),
+                "container_name": container_name,
                 "error": None
             }
         else:
@@ -799,3 +820,433 @@ async def prepare_task_execution(
     except Exception as e:
         log.error(f"准备Docker环境失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"准备Docker环境失败: {str(e)}")
+
+
+# 执行测试任务
+@router.post("/tasks/{task_id}/execute", response_model=TestExecutionResponse)
+async def execute_task_tests(
+    task_id: str = Path(..., description="任务ID")
+):
+    """
+    执行测试任务的所有测试用例
+    
+    该接口会执行指定任务的所有测试用例，并自动完成测试用例的加载、命令解析、命令执行和结果保存等步骤。
+    
+    - **task_id**: 任务ID
+    
+    返回测试执行结果，包括测试用例的执行情况统计
+    """
+    log.info(f"开始执行任务测试: {task_id}")
+    
+    start_time = time.time()
+    
+    try:
+        # 获取任务信息验证
+        task = get_test_task(task_id)
+        if not task:
+            log.error(f"任务不存在: {task_id}")
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+            
+        # 初始化状态
+        state = {
+            "task_id": task_id,
+            "current_case_index": 0,
+            "test_cases": [],
+            "command_strategies": None, 
+            "current_strategy_index": 0,
+            "status": "created",
+            "errors": [],
+            "container_ready": True  # 假设容器已准备好
+        }
+        
+        # 统计数据
+        cases_total = 0
+        cases_executed = 0
+        cases_passed = 0
+        cases_failed = 0
+        error_messages = []
+        
+        # 第一步：加载测试用例
+        log.info(f"步骤1: 加载测试用例 - 任务ID: {task_id}")
+        load_result = load_test_cases(state)
+        if not load_result or load_result.get("status") == "error":
+            error_msg = f"加载测试用例失败: {load_result.get('errors', ['未知错误'])}"
+            log.error(error_msg)
+            return {
+                "message": error_msg,
+                "success": False,
+                "task_id": task_id,
+                "cases_total": 0,
+                "cases_executed": 0,
+                "cases_passed": 0,
+                "cases_failed": 0,
+                "execution_time": time.time() - start_time,
+                "error": error_msg
+            }
+            
+        test_cases = load_result.get('test_cases', [])
+        if not test_cases:
+            log.error("未找到测试用例")
+            return {
+                "message": "未找到测试用例",
+                "success": False,
+                "task_id": task_id,
+                "cases_total": 0,
+                "cases_executed": 0,
+                "cases_passed": 0,
+                "cases_failed": 0,
+                "execution_time": time.time() - start_time,
+                "error": "未找到测试用例"
+            }
+            
+        log.info(f"成功加载测试用例，共 {len(test_cases)} 个")
+        cases_total = len(test_cases)
+        state = load_result
+        
+        # 逐个执行测试用例
+        for i, case in enumerate(test_cases):
+            case_id = case.get('case_id')
+            if not case_id:
+                log.error("测试用例缺少case_id字段")
+                error_messages.append("测试用例缺少case_id字段")
+                continue
+                
+            log.info(f"正在处理测试用例 {i+1}/{len(test_cases)}: {case_id}")
+            
+            # 更新当前用例索引
+            state['current_case_index'] = i
+            state['case_id'] = case_id
+            
+            try:
+                # 解析命令
+                log.info(f"解析测试用例命令: {case_id}")
+                parse_result = await parse_command(state)
+                if not parse_result or parse_result.get("status") != "parsed":
+                    log.error(f"命令解析失败: {case_id}")
+                    cases_failed += 1
+                    continue
+                    
+                state = parse_result
+                
+                # 执行命令
+                log.info(f"执行测试用例命令: {case_id}")
+                execute_result = await execute_command(state)
+                if not execute_result or execute_result.get("status") != "executed":
+                    log.error(f"命令执行失败: {case_id}")
+                    cases_failed += 1
+                    continue
+                
+                state = execute_result
+                
+                # 获取执行结果
+                execution_result = state.get('execution_result', {})
+                success = execution_result.get('success', False)
+                
+                if success:
+                    cases_passed += 1
+                else:
+                    cases_failed += 1
+                
+                # 保存结果
+                log.info(f"保存测试用例结果: {case_id}")
+                save_result_state = await save_result(state)
+                if not save_result_state:
+                    log.error(f"保存结果失败: {case_id}")
+                    error_messages.append(f"保存结果失败: {case_id}")
+                else:
+                    cases_executed += 1
+                    state = save_result_state
+                
+            except Exception as e:
+                log.error(f"处理测试用例 {case_id} 时出错: {str(e)}")
+                error_messages.append(f"处理测试用例 {case_id} 时出错: {str(e)}")
+                cases_failed += 1
+        
+        # 计算总执行时间
+        execution_time = time.time() - start_time
+        
+        # 更新任务状态为已完成
+        with get_db() as db:
+            # 更新测试任务状态
+            update_test_task_status(
+                task_id=task_id,
+                status="completed"
+            )
+        
+        # 组装最终响应
+        message = f"测试执行完成，共 {cases_total} 个测试用例，成功 {cases_passed} 个，失败 {cases_failed} 个"
+        log.success(message)
+        
+        return {
+            "message": message,
+            "success": cases_failed == 0 and cases_executed > 0,
+            "task_id": task_id,
+            "cases_total": cases_total,
+            "cases_executed": cases_executed,
+            "cases_passed": cases_passed,
+            "cases_failed": cases_failed,
+            "execution_time": execution_time,
+            "error": "; ".join(error_messages) if error_messages else None
+        }
+    except Exception as e:
+        log.error(f"执行测试任务时出错: {str(e)}")
+        import traceback
+        log.error(traceback.format_exc())
+        
+        return {
+            "message": f"执行测试任务时出错: {str(e)}",
+            "success": False,
+            "task_id": task_id,
+            "cases_total": 0,
+            "cases_executed": 0,
+            "cases_passed": 0,
+            "cases_failed": 0,
+            "execution_time": time.time() - start_time,
+            "error": str(e)
+        }
+
+# 执行单个测试用例
+@router.post("/testcases/{case_id}/execute", response_model=TestExecutionResponse)
+async def execute_single_test_case(
+    case_id: str = Path(..., description="测试用例ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    执行单个测试用例
+    
+    该接口会执行指定的单个测试用例，并自动完成命令解析、命令执行和结果保存等步骤。
+    
+    - **case_id**: 测试用例ID
+    
+    返回测试执行结果
+    """
+    log.info(f"开始执行单个测试用例: {case_id}")
+    
+    start_time = time.time()
+    
+    try:
+        # 获取测试用例信息
+        case = db.query(DBTestCase).filter(DBTestCase.case_id == case_id).first()
+        if not case:
+            raise HTTPException(status_code=404, detail=f"测试用例不存在: {case_id}")
+            
+        # 获取任务ID
+        task_id = case.task_id
+        
+        # 初始化状态
+        state = {
+            "task_id": task_id,
+            "case_id": case_id,  # 指定测试用例ID
+            "current_case_index": 0,
+            "test_cases": [],
+            "command_strategies": None, 
+            "current_strategy_index": 0,
+            "status": "created",
+            "errors": [],
+            "container_ready": True  # 假设容器已准备好
+        }
+        
+        cases_passed = 0
+        cases_failed = 0
+        error_message = None
+        
+        # 加载指定的测试用例
+        log.info(f"加载测试用例: {case_id}")
+        load_result = load_test_cases(state)
+        if not load_result or load_result.get("status") == "error":
+            error_msg = f"加载测试用例失败: {load_result.get('errors', ['未知错误'])}"
+            log.error(error_msg)
+            return {
+                "message": error_msg,
+                "success": False,
+                "task_id": task_id,
+                "cases_total": 1,
+                "cases_executed": 0,
+                "cases_passed": 0,
+                "cases_failed": 1,
+                "execution_time": time.time() - start_time,
+                "error": error_msg
+            }
+            
+        test_cases = load_result.get('test_cases', [])
+        if not test_cases:
+            log.error(f"未找到测试用例: {case_id}")
+            return {
+                "message": f"未找到测试用例: {case_id}",
+                "success": False,
+                "task_id": task_id,
+                "cases_total": 1,
+                "cases_executed": 0,
+                "cases_passed": 0,
+                "cases_failed": 1,
+                "execution_time": time.time() - start_time,
+                "error": f"未找到测试用例: {case_id}"
+            }
+            
+        log.info(f"成功加载测试用例: {case_id}")
+        state = load_result
+        
+        try:
+            # 解析命令
+            log.info(f"解析测试用例命令: {case_id}")
+            parse_result = await parse_command(state)
+            if not parse_result or parse_result.get("status") != "parsed":
+                error_msg = f"命令解析失败: {case_id}"
+                log.error(error_msg)
+                cases_failed = 1
+                error_message = error_msg
+            else:
+                state = parse_result
+                
+                # 执行命令
+                log.info(f"执行测试用例命令: {case_id}")
+                execute_result = await execute_command(state)
+                if not execute_result or execute_result.get("status") != "executed":
+                    error_msg = f"命令执行失败: {case_id}"
+                    log.error(error_msg)
+                    cases_failed = 1
+                    error_message = error_msg
+                else:
+                    state = execute_result
+                    
+                    # 获取执行结果
+                    execution_result = state.get('execution_result', {})
+                    success = execution_result.get('success', False)
+                    
+                    if success:
+                        cases_passed = 1
+                    else:
+                        cases_failed = 1
+                        error_message = execution_result.get('error', '未知错误')
+                    
+                    # 保存结果
+                    log.info(f"保存测试用例结果: {case_id}")
+                    save_result_state = await save_result(state)
+                    if not save_result_state:
+                        error_msg = f"保存结果失败: {case_id}"
+                        log.error(error_msg)
+                        if not error_message:
+                            error_message = error_msg
+        except Exception as e:
+            log.error(f"处理测试用例 {case_id} 时出错: {str(e)}")
+            cases_failed = 1
+            error_message = str(e)
+        
+        # 计算总执行时间
+        execution_time = time.time() - start_time
+        
+        # 组装最终响应
+        cases_executed = cases_passed + cases_failed
+        message = f"测试用例 {case_id} 执行{'成功' if cases_passed == 1 else '失败'}"
+        log.info(message)
+        
+        return {
+            "message": message,
+            "success": cases_passed == 1,
+            "task_id": task_id,
+            "cases_total": 1,
+            "cases_executed": cases_executed,
+            "cases_passed": cases_passed,
+            "cases_failed": cases_failed,
+            "execution_time": execution_time,
+            "error": error_message
+        }
+    except Exception as e:
+        log.error(f"执行测试用例时出错: {str(e)}")
+        import traceback
+        log.error(traceback.format_exc())
+        
+        return {
+            "message": f"执行测试用例时出错: {str(e)}",
+            "success": False,
+            "task_id": "unknown",
+            "cases_total": 1,
+            "cases_executed": 0,
+            "cases_passed": 0,
+            "cases_failed": 1,
+            "execution_time": time.time() - start_time,
+            "error": str(e)
+        }
+
+# 查询任务测试状态
+@router.get("/tasks/{task_id}/status", response_model=Dict[str, Any])
+async def get_task_test_status(
+    task_id: str = Path(..., description="任务ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    查询任务的测试状态
+    
+    该接口返回指定任务的测试状态，包括总体进度和各测试用例的详细状态。
+    
+    - **task_id**: 任务ID
+    
+    返回任务测试状态信息
+    """
+    log.info(f"查询任务测试状态: {task_id}")
+    
+    try:
+        # 获取任务信息
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+            
+        # 获取任务的所有测试用例
+        cases = db.query(DBTestCase).filter(DBTestCase.task_id == task_id).all()
+        
+        # 统计测试用例状态
+        total_cases = len(cases)
+        completed_cases = 0
+        passed_cases = 0
+        failed_cases = 0
+        pending_cases = 0
+        
+        case_details = []
+        
+        for case in cases:
+            case_info = {
+                "case_id": case.case_id,
+                "status": case.status or "pending",
+                "is_passed": case.is_passed,
+                "result_analysis": case.result_analysis,
+                "has_output": bool(case.actual_output)
+            }
+            
+            case_details.append(case_info)
+            
+            # 统计不同状态的用例数量
+            if case.status == "completed":
+                completed_cases += 1
+                if case.is_passed:
+                    passed_cases += 1
+                else:
+                    failed_cases += 1
+            elif case.status == "failed":
+                completed_cases += 1
+                failed_cases += 1
+            else:
+                pending_cases += 1
+        
+        # 计算整体进度百分比
+        progress = (completed_cases / total_cases * 100) if total_cases > 0 else 0
+        
+        # 组装响应
+        response = {
+            "task_id": task_id,
+            "status": task.status,
+            "total_cases": total_cases,
+            "completed_cases": completed_cases,
+            "passed_cases": passed_cases,
+            "failed_cases": failed_cases,
+            "pending_cases": pending_cases,
+            "progress_percent": round(progress, 2),
+            "case_details": case_details,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None
+        }
+        
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"查询任务测试状态失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"查询任务测试状态失败: {str(e)}")
