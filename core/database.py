@@ -59,6 +59,7 @@ class TestCase(Base):
     document_id = Column(String(50), index=True)
     input_data = Column(JSON)
     expected_output = Column(JSON, nullable=True)
+    test_data = Column(String(500), nullable=True)  # 添加test_data字段，用于存储测试图片路径
     
     # 从TestResult表移过来的字段
     actual_output = Column(Text, nullable=True)  # 实际输出结果

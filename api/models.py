@@ -133,3 +133,26 @@ class TestAnalysisResponse(BaseModel):
     task_id: str = Field(description="任务ID")
     summary: Dict[str, Any] = Field(description="测试总结")
     analysis_results: List[TestAnalysisResult] = Field(description="测试用例分析结果列表")
+
+class TestDataUpdateRequest(BaseModel):
+    """测试数据更新请求模型"""
+    case_id: str = Field(description="测试用例ID")
+    test_data: str = Field(description="测试数据路径")
+
+class TestDataBatchUpdateRequest(BaseModel):
+    """批量测试数据更新请求模型"""
+    updates: List[TestDataUpdateRequest] = Field(description="测试数据更新列表")
+
+class TestCaseWithData(BaseModel):
+    """带测试数据的测试用例响应模型"""
+    case_id: str = Field(description="测试用例ID")
+    name: str = Field(description="测试名称")
+    test_data: Optional[str] = Field(None, description="测试数据路径")
+    purpose: str = Field(description="测试目的")
+    steps: str = Field(description="测试步骤")
+
+class TestCasesDataResponse(BaseModel):
+    """测试用例数据响应模型"""
+    message: str = Field(description="响应消息")
+    task_id: str = Field(description="任务ID")
+    test_cases: List[TestCaseWithData] = Field(description="测试用例列表")

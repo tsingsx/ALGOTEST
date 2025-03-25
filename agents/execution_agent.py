@@ -174,7 +174,6 @@ class ZhipuAIClient:
 
 容器名称: {container_name if container_name else "未提供，需要在命令中使用容器名称参数"}
 
-测试数据：-i /data/000000.jpg -o ./output.jpg
 
 请返回一个JSON对象，包含工具名称、参数和描述。请确保只返回一条命令。
 例如:
@@ -673,10 +672,12 @@ async def parse_command(state: Dict[str, Any]) -> Dict[str, Any]:
 
     log.info(f"获取到测试步骤: {steps[:100]}..." if len(steps) > 100 else f"获取到测试步骤: {steps}")
 
-    # 查询任务信息以获取容器名称
+    # 查询任务信息以获取容器名称和测试数据
     try:
         db = get_db()
-        log.info(f"从数据库获取任务信息: task_id={state.get('task_id')}")
+        log.info(f"从数据库获取任务和测试用例信息: task_id={state.get('task_id')}, case_id={case_id}")
+        
+        # 获取容器名称
         query = text("SELECT container_name FROM test_tasks WHERE task_id = :id")
         result = db.execute(query, {"id": state.get("task_id")}).fetchone()
         if not result or not result[0]:
@@ -685,16 +686,28 @@ async def parse_command(state: Dict[str, Any]) -> Dict[str, Any]:
         else:
             container_name = result[0]
             log.info(f"获取到容器名称: {container_name}")
+            
+        # 获取测试数据路径
+        test_data_query = text("SELECT test_data FROM test_cases WHERE case_id = :case_id")
+        test_data_result = db.execute(test_data_query, {"case_id": case_id}).fetchone()
+        test_data_path = test_data_result[0] if test_data_result and test_data_result[0] else "/data/000000.jpg"
+        log.info(f"获取到测试数据路径: {test_data_path}")
+        
     except Exception as e:
         log.error(f"查询任务信息失败: {e}")
         container_name = None
+        test_data_path = "/data/000000.jpg"
 
     # 创建智谱AI客户端
     ai_client = ZhipuAIClient()
 
-    # 解析命令 - 使用智谱AI方法，传入容器名称
+    # 构建包含测试数据路径的步骤
+    steps_with_data = f"{steps}\n测试数据路径: {test_data_path}"
+    log.info(f"添加测试数据路径到步骤中: {test_data_path}")
+
+    # 解析命令 - 使用智谱AI方法，传入容器名称和测试数据路径
     log.info(f"使用智谱AI解析命令，使用容器名称: {container_name}")
-    command_strategies = await ai_client.parse_command(steps, [], container_name)
+    command_strategies = await ai_client.parse_command(steps_with_data, [], container_name)
     
     log.info(f"命令解析成功, 共获取到 {len(command_strategies.strategies)} 条命令策略")
     if command_strategies.strategies:
@@ -702,13 +715,13 @@ async def parse_command(state: Dict[str, Any]) -> Dict[str, Any]:
         log.info(f"第一条命令策略: {first_strategy.tool} - {first_strategy.description}")
     
     # 更新状态
-        return {
-            **state,
+    return {
+        **state,
         "case_id": case_id,  # 设置当前执行的case_id
         "command_strategies": command_strategies,
         "current_strategy_index": 0,
         "status": "parsed"
-        }
+    }
 
 
 async def execute_command(state: ExecutionState) -> ExecutionState:

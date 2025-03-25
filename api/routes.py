@@ -58,7 +58,10 @@ from api.models import (
     DockerSetupResponse,
     TestExecutionResponse,
     TestAnalysisResponse,
-    TestAnalysisResult
+    TestAnalysisResult,
+    TestCasesDataResponse,
+    TestCaseWithData,
+    TestDataBatchUpdateRequest
 )
 
 # 创建路由器
@@ -1367,3 +1370,136 @@ async def get_task_analysis(
     except Exception as e:
         log.error(f"获取任务测试分析结果失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取任务测试分析结果失败: {str(e)}")
+
+# 获取任务的所有测试用例及其test_data
+@router.get("/tasks/{task_id}/test-data", response_model=TestCasesDataResponse)
+async def get_test_cases_data(
+    task_id: str = Path(..., description="任务ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取指定任务的所有测试用例及其测试数据路径
+    
+    - **task_id**: 任务ID
+    
+    返回测试用例列表及其测试数据路径
+    """
+    log.info(f"获取任务测试用例数据: {task_id}")
+    
+    try:
+        # 检查任务是否存在
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+        
+        # 获取所有测试用例
+        cases = db.query(DBTestCase).filter(DBTestCase.task_id == task_id).all()
+        
+        # 转换为响应格式
+        test_cases = []
+        for case in cases:
+            input_data = case.input_data or {}
+            test_cases.append(
+                TestCaseWithData(
+                    case_id=case.case_id,
+                    name=input_data.get("name", "未命名测试用例"),
+                    test_data=case.test_data,
+                    purpose=input_data.get("purpose", ""),
+                    steps=input_data.get("steps", "")
+                )
+            )
+        
+        return TestCasesDataResponse(
+            message=f"成功获取{len(test_cases)}个测试用例数据",
+            task_id=task_id,
+            test_cases=test_cases
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"获取测试用例数据失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取测试用例数据失败: {str(e)}")
+
+
+# 更新测试用例的test_data
+@router.put("/tasks/{task_id}/test-data", response_model=TestCasesDataResponse)
+async def update_test_cases_data(
+    task_id: str = Path(..., description="任务ID"),
+    request: TestDataBatchUpdateRequest = Body(..., description="测试数据更新请求"),
+    db: Session = Depends(get_db)
+):
+    """
+    批量更新测试用例的测试数据路径
+    
+    - **task_id**: 任务ID
+    - **request**: 包含要更新的测试用例ID和对应的测试数据路径
+    
+    返回更新后的测试用例列表
+    """
+    log.info(f"更新任务测试用例数据: {task_id}")
+    
+    try:
+        # 检查任务是否存在
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+        
+        # 获取所有要更新的case_id
+        case_ids = [update.case_id for update in request.updates]
+        
+        # 获取这些测试用例
+        cases = db.query(DBTestCase).filter(
+            DBTestCase.task_id == task_id,
+            DBTestCase.case_id.in_(case_ids)
+        ).all()
+        
+        # 创建case_id到test_data的映射
+        updates_map = {update.case_id: update.test_data for update in request.updates}
+        
+        # 更新测试用例
+        updated_cases = []
+        for case in cases:
+            if case.case_id in updates_map:
+                case.test_data = updates_map[case.case_id]
+                input_data = case.input_data or {}
+                updated_cases.append(
+                    TestCaseWithData(
+                        case_id=case.case_id,
+                        name=input_data.get("name", "未命名测试用例"),
+                        test_data=case.test_data,
+                        purpose=input_data.get("purpose", ""),
+                        steps=input_data.get("steps", "")
+                    )
+                )
+        
+        # 提交更改
+        db.commit()
+        
+        # 获取所有测试用例（包括未更新的）
+        all_cases = db.query(DBTestCase).filter(DBTestCase.task_id == task_id).all()
+        test_cases = []
+        for case in all_cases:
+            input_data = case.input_data or {}
+            test_cases.append(
+                TestCaseWithData(
+                    case_id=case.case_id,
+                    name=input_data.get("name", "未命名测试用例"),
+                    test_data=case.test_data,
+                    purpose=input_data.get("purpose", ""),
+                    steps=input_data.get("steps", "")
+                )
+            )
+        
+        return TestCasesDataResponse(
+            message=f"成功更新{len(updated_cases)}个测试用例数据",
+            task_id=task_id,
+            test_cases=test_cases
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        log.error(f"更新测试用例数据失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新测试用例数据失败: {str(e)}")
