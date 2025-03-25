@@ -46,6 +46,7 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 # 编辑.env文件，填写必要的配置信息，特别是ZHIPU_API_KEY
+# 将指令格式文档放在data文件夹下
 ```
 
 ## 使用方法

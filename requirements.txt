@@ -11,4 +11,4 @@ langgraph
 zhipuai
 mcp
 PyPDF2
-pdfminer.six
+pdfminer.sixopenpyxl>=3.1.2

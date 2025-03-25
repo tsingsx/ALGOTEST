@@ -253,6 +253,8 @@ def generate_test_cases(state: AnalysisState) -> AnalysisState:
         
         例如测试步骤可以这样描述：
         "设置参数 visual_object=false，然后运行算法检测图像"
+
+        预期结果可以根据需求文档中 三、输出json 中的内容来描述
         
         请确保测试用例全面覆盖以下内容：
         1. 算法报警逻辑的正确性验证
