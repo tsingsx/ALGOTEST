@@ -13,13 +13,11 @@ from core.database import (
     ensure_db,
     get_db, 
     TestTask, 
-    TestCase, 
-    TestReport,
+    TestCase,
     create_test_task,
     get_test_task,
     update_test_task,
-    create_test_case,
-    create_test_report
+    create_test_case
 )
 from core.utils import (
     generate_unique_id, 
@@ -51,12 +49,10 @@ __all__ = [
     'get_db',
     'TestTask',
     'TestCase',
-    'TestReport',
     'create_test_task',
     'get_test_task',
     'update_test_task',
     'create_test_case',
-    'create_test_report',
     
     # 工具
     'generate_unique_id',

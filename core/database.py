@@ -47,7 +47,6 @@ class TestTask(Base):
     
     # 关系
     test_cases = relationship("TestCase", back_populates="task", cascade="all, delete-orphan")
-    test_report = relationship("TestReport", back_populates="task", uselist=False, cascade="all, delete-orphan")
 
 class TestCase(Base):
     """测试用例模型"""
@@ -71,22 +70,6 @@ class TestCase(Base):
     
     # 关系
     task = relationship("TestTask", back_populates="test_cases")
-
-class TestReport(Base):
-    """测试报告模型"""
-    __tablename__ = "test_reports"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(String(50), ForeignKey("test_tasks.task_id", ondelete="CASCADE"), unique=True)
-    report_content = Column(Text)
-    summary = Column(Text)
-    total_cases = Column(Integer)
-    passed_cases = Column(Integer)
-    failed_cases = Column(Integer)
-    created_at = Column(DateTime, default=datetime.now)
-    
-    # 关系
-    task = relationship("TestTask", back_populates="test_report")
 
 def init_db():
     """初始化数据库，创建所有表（警告：会删除所有现有数据）"""
@@ -231,24 +214,6 @@ def create_test_case(case_data: Dict[str, Any], db: Session = None) -> TestCase:
     finally:
         if close_db:
             db.close()
-
-def create_test_report(report_data: Dict[str, Any]) -> TestReport:
-    """
-    创建测试报告
-    
-    Args:
-        report_data: 测试报告数据
-        
-    Returns:
-        TestReport: 创建的测试报告对象
-    """
-    with get_db() as db:
-        report = TestReport(**report_data)
-        db.add(report)
-        db.commit()
-        db.refresh(report)
-        logger.info(f"创建测试报告: {report.task_id}")
-        return report
 
 def get_all_test_tasks() -> List[Dict[str, Any]]:
     """
