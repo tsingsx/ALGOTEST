@@ -207,11 +207,24 @@ def generate_excel_report(state: ReportState) -> ReportState:
         # 确保report目录存在
         os.makedirs("data/report", exist_ok=True)
         
-        # 从数据库获取所有测试用例
+        # 从数据库获取所有测试用例和任务信息
         with get_db() as db:
             cases = db.query(TestCase).filter(TestCase.task_id == task_id).all()
             if not cases:
                 raise ValueError(f"未找到任务的测试用例: {task_id}")
+            
+            # 获取任务信息
+            task = db.execute(text("""
+                SELECT algorithm_image, dataset_url 
+                FROM test_tasks 
+                WHERE task_id = :task_id
+            """), {"task_id": task_id}).fetchone()
+            
+            if not task:
+                raise ValueError(f"未找到任务信息: {task_id}")
+            
+            algorithm_image = task[0] or ""
+            dataset_url = task[1] or ""
             
             # 获取LLM配置
             llm_config = get_llm_config()
@@ -221,6 +234,61 @@ def generate_excel_report(state: ReportState) -> ReportState:
             ws = wb.active
             ws.title = "测试报告"
             
+            # 设置基本信息部分的样式
+            header_fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
+            # 设置标题
+            title = f"算法测试报告-{datetime.now().strftime('%Y_%m_%d')}"
+            ws.merge_cells('A1:E1')
+            title_cell = ws.cell(row=1, column=1, value=title)
+            title_cell.font = Font(bold=True, size=12)
+            title_cell.alignment = Alignment(horizontal="center", vertical="center")
+            title_cell.border = thin_border
+            
+            # 添加基本信息
+            info_data = [
+                ["测试需求", "", "", "SDK版本版本", ""],
+                ["中心授权版本", "", "", ""],
+                ["测试人员", "", "", ""],
+                ["EV_SDK镜像版本", algorithm_image, "", ""],
+                ["数据集", dataset_url, "", ""],
+                ["服务器配置", "", "", ""],
+                ["数据集", "", "", ""],
+                ["算法指标说明", "", "", ""]
+            ]
+            
+            current_row = 2
+            for info in info_data:
+                # 如果是算法指标说明，合并整行
+                if info[0] != "测试需求":
+                    
+                    ws.merge_cells(f'B{current_row}:E{current_row}')
+                    cell = ws.cell(row=current_row, column=1, value=info[0])
+                    cell.fill = header_fill
+                    cell.border = thin_border
+                    cell = ws.cell(row=current_row, column=2, value=info[1])
+                    cell.border = thin_border
+                else:
+                    # 合并第3、4列
+                    ws.merge_cells(f'B{current_row}:C{current_row}')
+                    for col, value in enumerate(info, 1):  # 只取前3个值，因为第3、4列合并了
+                        if col != 3:
+                            cell = ws.cell(row=current_row, column=col, value=value)
+                            cell.border = thin_border
+                            if col == 1:  # 第一列使用灰色背景
+                                cell.fill = header_fill
+                
+                current_row += 1
+            
+            # 添加空行
+            current_row += 1
+            
             # 设置列宽
             ws.column_dimensions['A'].width = 20  # 分类
             ws.column_dimensions['B'].width = 25  # 子类
@@ -228,97 +296,150 @@ def generate_excel_report(state: ReportState) -> ReportState:
             ws.column_dimensions['D'].width = 15  # 测试结果
             ws.column_dimensions['E'].width = 50  # 备注
             
-            # 设置表头
+            # 添加精度测试结果标题
+            ws.merge_cells(f'A{current_row}:E{current_row}')
+            cell = ws.cell(row=current_row, column=1, value="精度测试结果")
+            cell.border = thin_border
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            current_row += 1
+            
+            # 添加模型识别率测试分析标题
+            ws.merge_cells(f'A{current_row}:E{current_row}')
+            cell = ws.cell(row=current_row, column=1, value="模型识别率测试分析")
+            cell.border = thin_border
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            current_row += 1
+            
+            # 添加性能测试分析标题
+            ws.merge_cells(f'A{current_row}:E{current_row}')
+            cell = ws.cell(row=current_row, column=1, value="性能测试分析")
+            cell.border = thin_border
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            current_row += 1
+            
+            # 添加兼容性测试分析标题
+            ws.merge_cells(f'A{current_row}:E{current_row}')
+            cell = ws.cell(row=current_row, column=1, value="兼容性测试分析")
+            cell.border = thin_border
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            current_row += 1
+            
+            # 添加规范测试分析标题
+            ws.merge_cells(f'A{current_row}:E{current_row}')
+            cell = ws.cell(row=current_row, column=1, value="规范测试分析")
+            cell.border = thin_border
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            current_row += 1
+            
+            # 设置规范测试表头
             headers = ["分类", "子类", "标准", "测试结果", "备注"]
             for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col, value=header)
+                cell = ws.cell(row=current_row, column=col, value=header)
                 cell.font = Font(bold=True)
-                cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
+                cell.fill = header_fill
                 cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = thin_border
+            current_row += 1
             
-            # 为每个测试用例生成报告行
-            current_row = 2
+            # 构建所有测试用例的信息
+            test_cases_info = []
             for case in cases:
-                # 提取测试用例信息
                 input_data = case.input_data or {}
                 name = input_data.get("name", "未命名测试用例")
                 steps = input_data.get("steps", "")
                 
-                # 构建提示词，让大模型分析测试用例并生成报告行
-                prompt = f"""
-                请分析以下测试用例信息，生成测试报告的一行数据。返回JSON格式，包含以下字段：
-                - category: 测试分类（如：功能测试、性能测试、接口测试等）
-                - sub_category: 具体测试的参数名称（从测试步骤中提取）
-                - standard: 该参数的作用和测试标准
-                - result: 根据is_passed确定（通过/不通过）
-                - note: 对result_analysis的简要总结
-                
-                测试用例信息：
-                - 名称: {name}
-                - 步骤: {steps}
-                - 通过状态: {case.is_passed}
-                - 分析结果: {case.result_analysis or '无分析结果'}
-                
-                请确保返回格式如下：
-                {{
-                    "category": "分类名称",
-                    "sub_category": "参数名称",
-                    "standard": "参数作用和测试标准",
-                    "result": "通过/不通过",
-                    "note": "分析结果总结"
-                }}
-                """
-                
-                try:
-                    # 调用大模型API
-                    result = call_zhipu_api(prompt, llm_config)
-                    
-                    # 尝试解析JSON响应
-                    try:
-                        # 直接尝试解析
-                        report_data = json.loads(result)
-                    except json.JSONDecodeError:
-                        # 如果直接解析失败，尝试从文本中提取JSON
-                        import re
-                        json_match = re.search(r'\{[\s\S]*\}', result)
-                        if json_match:
-                            report_data = json.loads(json_match.group())
-                        else:
-                            raise ValueError("无法从大模型响应中提取JSON数据")
-                    
-                    # 写入Excel
-                    ws.cell(row=current_row, column=1, value=report_data["category"])
-                    ws.cell(row=current_row, column=2, value=report_data["sub_category"])
-                    ws.cell(row=current_row, column=3, value=report_data["standard"])
-                    ws.cell(row=current_row, column=4, value=report_data["result"])
-                    ws.cell(row=current_row, column=5, value=report_data["note"])
-                    
-                    # 设置单元格样式
-                    for col in range(1, 6):
-                        cell = ws.cell(row=current_row, column=col)
-                        cell.alignment = Alignment(wrap_text=True, vertical="center")
-                        if col == 4:  # 测试结果列
-                            if report_data["result"] == "通过":
-                                cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-                            else:
-                                cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-                    
-                    current_row += 1
-                    
-                except Exception as e:
-                    log.error(f"处理测试用例 {case.case_id} 时出错: {str(e)}")
-                    continue
+                case_info = f"""
+测试用例 {case.case_id}:
+- 名称: {name}
+- 步骤: {steps}
+- 通过状态: {case.is_passed}
+- 分析结果: {case.result_analysis or '无分析结果'}
+"""
+                test_cases_info.append(case_info)
             
-            # 添加边框
-            thin_border = Border(
-                left=Side(style='thin'),
-                right=Side(style='thin'),
-                top=Side(style='thin'),
-                bottom=Side(style='thin')
-            )
-            for row in ws.iter_rows(min_row=1, max_row=current_row-1, min_col=1, max_col=5):
-                for cell in row:
-                    cell.border = thin_border
+            # 构建整体提示词
+            prompt = f"""
+请分析以下所有测试用例信息，为每个测试用例生成测试报告的一行数据。
+
+{os.linesep.join(test_cases_info)}
+
+对每个测试用例，请生成以下字段：
+- category: 测试分类（如：功能测试、性能测试、接口测试等）
+- sub_category: 具体测试的参数名称（从测试步骤中提取）
+- standard: 该参数的作用和测试标准
+- result: 根据is_passed确定（通过/不通过）
+- note: 对result_analysis的简要总结
+
+请按以下JSON格式返回，key为测试用例ID：
+{{
+    "test_case_id_1": {{
+        "category": "分类名称",
+        "sub_category": "参数名称",
+        "standard": "参数作用和测试标准",
+        "result": "通过/不通过",
+        "note": "分析结果总结"
+    }},
+    "test_case_id_2": {{
+        ...
+    }}
+}}
+"""
+            
+            try:
+                # 调用大模型API
+                result = call_zhipu_api(prompt, llm_config)
+                
+                # 尝试解析JSON响应
+                try:
+                    # 直接尝试解析
+                    report_data_all = json.loads(result)
+                except json.JSONDecodeError:
+                    # 如果直接解析失败，尝试从文本中提取JSON
+                    import re
+                    json_match = re.search(r'\{[\s\S]*\}', result)
+                    if json_match:
+                        report_data_all = json.loads(json_match.group())
+                    else:
+                        raise ValueError("无法从大模型响应中提取JSON数据")
+                
+                # 写入每个测试用例的数据
+                for case in cases:
+                    report_data = report_data_all.get(case.case_id)
+                    if report_data:
+                        # 写入Excel
+                        ws.cell(row=current_row, column=1, value=report_data["category"])
+                        ws.cell(row=current_row, column=2, value=report_data["sub_category"])
+                        ws.cell(row=current_row, column=3, value=report_data["standard"])
+                        ws.cell(row=current_row, column=4, value=report_data["result"])
+                        ws.cell(row=current_row, column=5, value=report_data["note"])
+                        
+                        # 设置单元格样式
+                        for col in range(1, 6):
+                            cell = ws.cell(row=current_row, column=col)
+                            cell.alignment = Alignment(wrap_text=True, vertical="center")
+                            cell.border = thin_border
+                            if col == 4:  # 测试结果列
+                                if report_data["result"] == "通过":
+                                    cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                                else:
+                                    cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                        
+                        current_row += 1
+                    else:
+                        log.warning(f"未找到测试用例 {case.case_id} 的报告数据")
+                
+            except Exception as e:
+                log.error(f"处理测试报告数据时出错: {str(e)}")
+                return {
+                    **state,
+                    "errors": state.get("errors", []) + [str(e)],
+                    "status": "error"
+                }
             
             # 保存Excel文件
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -396,4 +517,41 @@ async def run_report_generation(task_id: str) -> Dict[str, Any]:
     log.info(f"报告生成Agent运行完成: {task_id}, 状态: {result['status']}")
     
     return result
+
+if __name__ == "__main__":
+    import asyncio
+    import sys
+    from core.logger import setup_logging
+    
+    # 设置日志
+    setup_logging()
+    
+    # 使用指定的task_id
+    task_id = "TASK1742525623_6049f9a3d00c"
+    log.info(f"开始生成测试报告，任务ID: {task_id}")
+    
+    try:
+        # 创建初始状态
+        initial_state = {
+            "task_id": task_id,
+            "test_cases": None,
+            "analysis_results": None,
+            "errors": [],
+            "status": "created"
+        }
+        
+        # 直接调用generate_excel_report函数
+        result = generate_excel_report(initial_state)
+        
+        # 检查结果
+        if result["status"] == "report_generated":
+            log.success(f"报告生成成功！")
+            log.info(f"报告路径: {result.get('report_path')}")
+        else:
+            log.error(f"报告生成失败: {result.get('errors', ['未知错误'])}")
+            sys.exit(1)
+            
+    except Exception as e:
+        log.error(f"执行过程中出错: {str(e)}")
+        sys.exit(1)
 

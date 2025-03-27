@@ -24,7 +24,14 @@ import re
 import logging
 
 from core.config import get_settings, get_llm_config
-from core.database import get_db, update_test_case_status, update_test_task_status, get_test_task, TestCase
+from core.database import (
+    get_db, 
+    update_test_case_status, 
+    update_test_task_status,
+    get_test_task,
+    TestCase,
+    TestTask as DBTestTask  # 添加这个导入
+)
 from core.utils import generate_unique_id, format_timestamp, ensure_dir
 from core.logger import get_logger
 from core.mcp_config import get_mcp_config, get_cmd_format_path
@@ -681,22 +688,29 @@ async def parse_command(state: Dict[str, Any]) -> Dict[str, Any]:
         query = text("SELECT container_name FROM test_tasks WHERE task_id = :id")
         result = db.execute(query, {"id": state.get("task_id")}).fetchone()
         if not result or not result[0]:
-            log.warning(f"未找到容器名称，将使用默认容器名称")
-            container_name = None
-        else:
+            log.error(f"未找到容器名称")
+            raise ValueError("容器名称未设置，请先设置Docker容器")
+        
             container_name = result[0]
             log.info(f"获取到容器名称: {container_name}")
             
         # 获取测试数据路径
         test_data_query = text("SELECT test_data FROM test_cases WHERE case_id = :case_id")
         test_data_result = db.execute(test_data_query, {"case_id": case_id}).fetchone()
-        test_data_path = test_data_result[0] if test_data_result and test_data_result[0] else "/data/000000.jpg"
+        if not test_data_result or not test_data_result[0]:
+            log.error(f"未找到测试数据路径")
+            raise ValueError("测试数据路径未设置，请先设置测试数据")
+        
+        test_data_path = test_data_result[0]
         log.info(f"获取到测试数据路径: {test_data_path}")
         
     except Exception as e:
         log.error(f"查询任务信息失败: {e}")
-        container_name = None
-        test_data_path = "/data/000000.jpg"
+        return {
+            **state,
+            "errors": state.get("errors", []) + [str(e)],
+            "status": "error"
+        }
 
     # 创建智谱AI客户端
     ai_client = ZhipuAIClient()
@@ -715,13 +729,13 @@ async def parse_command(state: Dict[str, Any]) -> Dict[str, Any]:
         log.info(f"第一条命令策略: {first_strategy.tool} - {first_strategy.description}")
     
     # 更新状态
-    return {
-        **state,
+        return {
+            **state,
         "case_id": case_id,  # 设置当前执行的case_id
         "command_strategies": command_strategies,
         "current_strategy_index": 0,
         "status": "parsed"
-    }
+        }
 
 
 async def execute_command(state: ExecutionState) -> ExecutionState:
@@ -1360,7 +1374,7 @@ async def execute_container_command(task_id: str, command: str, external_output:
             is_error = True
             if not raw_stderr:
                 raw_stderr = raw_stdout
-                
+        
         # 保存完整的输出内容
         log.info("="*50)
         log.info(f"【命令结果】: {command}")
@@ -1564,3 +1578,144 @@ async def run_execution(task_id: str, case_id: Optional[str] = None, algorithm_i
     log.info(f"执行Agent运行完成: 任务ID={task_id}, 状态: {result['status']}")
     
     return result
+
+
+async def release_algorithm_container(task_id: str) -> Dict[str, Any]:
+    """
+    通过MCP释放指定任务的Docker容器
+    
+    Args:
+        task_id: 测试任务ID
+        
+    Returns:
+        释放结果
+    """
+    log.info(f"开始通过MCP释放算法Docker容器: {task_id}")
+    
+    try:
+        # 从数据库获取任务信息
+        task = get_test_task(task_id)
+        if not task:
+            raise ValueError(f"测试任务不存在: {task_id}")
+        
+        # 获取容器名称
+        container_name = task.container_name
+        if not container_name:
+            raise ValueError(f"任务 {task_id} 未关联Docker容器")
+        
+        # 构建Docker释放脚本
+        script = f"""
+# 检查容器是否存在
+container_id=$(docker ps -a --filter name={container_name} -q)
+if [ -z "$container_id" ]; then
+    echo "容器不存在: {container_name}"
+    exit 0
+fi
+
+# 停止并删除容器
+echo "正在停止并删除容器: {container_name}"
+docker stop {container_name} || true
+docker rm -f {container_name} || true
+
+# 验证容器是否已被删除
+container_exists=$(docker ps -a --filter name={container_name} -q)
+if [ ! -z "$container_exists" ]; then
+    echo "容器删除失败: {container_name}"
+    exit 1
+fi
+
+echo "容器已成功删除: {container_name}"
+"""
+        
+        log.info(f"准备通过MCP执行Docker释放脚本...")
+        
+        # 从配置获取SSE URL
+        sse_url = get_mcp_config()["sse_url"]
+        
+        # 连接到MCP服务器并执行脚本
+        async with sse_client(sse_url) as (read, write):
+            async with ClientSession(read, write) as session:
+                # 初始化连接
+                await session.initialize()
+                log.info("MCP服务器连接成功")
+                
+                # 使用execute_script工具执行Docker脚本
+                log.info("正在执行Docker释放脚本...")
+                result = await session.call_tool("execute_script", {"script": script})
+                
+                # 检查脚本执行结果
+                if hasattr(result, 'stderr') and result.stderr:
+                    log.error(f"Docker释放脚本执行出错: {result.stderr}")
+                    return {
+                        "success": False,
+                        "task_id": task_id,
+                        "error": f"Docker容器释放失败: {result.stderr}"
+                    }
+                
+                # 验证容器是否真的被删除
+                verify_script = f"""
+container_exists=$(docker ps -a --filter name={container_name} -q)
+if [ ! -z "$container_exists" ]; then
+    echo "容器仍然存在: {container_name}"
+    exit 1
+fi
+echo "容器验证成功: 已完全删除"
+"""
+                
+                try:
+                    # 验证容器状态
+                    verify_result = await session.call_tool("execute_script", {"script": verify_script})
+                    
+                    if hasattr(verify_result, 'stderr') and verify_result.stderr:
+                        log.error(f"容器删除验证失败: {verify_result.stderr}")
+                        return {
+                            "success": False,
+                            "task_id": task_id,
+                            "error": f"容器删除验证失败: {verify_result.stderr}"
+                        }
+                    
+                    # 检查验证脚本输出
+                    if hasattr(verify_result, 'stdout') and "容器验证成功" not in verify_result.stdout:
+                        log.error(f"容器删除验证未通过: {verify_result.stdout}")
+                        return {
+                            "success": False,
+                            "task_id": task_id,
+                            "error": f"容器删除验证未通过: {verify_result.stdout}"
+                        }
+                    
+                    log.info(f"Docker容器删除验证成功: {container_name}")
+                    
+                    # 清除数据库中的容器名称
+                    with get_db() as db:
+                        task = db.query(DBTestTask).filter(DBTestTask.task_id == task_id).first()
+                        if task:
+                            task.container_name = None
+                            db.commit()
+                            log.info(f"已清除数据库中的容器名称记录: {task_id}")
+                    
+                except Exception as e:
+                    log.error(f"验证容器删除状态时出错: {str(e)}")
+                    return {
+                        "success": False,
+                        "task_id": task_id,
+                        "error": f"验证容器删除状态时出错: {str(e)}"
+                    }
+                
+                log.info(f"Docker容器释放完成: {container_name}")
+        
+        return {
+            "success": True,
+            "task_id": task_id,
+            "container_name": container_name,
+            "result": {
+                "stdout": result.stdout if hasattr(result, "stdout") else str(result),
+                "stderr": result.stderr if hasattr(result, "stderr") else ""
+            }
+        }
+    except Exception as e:
+        log.error(f"释放Docker容器失败: {str(e)}")
+        return {
+            "success": False,
+            "task_id": task_id,
+            "error": str(e)
+        }

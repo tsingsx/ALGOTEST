@@ -41,8 +41,10 @@ from agents.execution_agent import (
     load_test_cases, 
     parse_command, 
     execute_command, 
-    save_result
+    save_result,
+    release_algorithm_container
 )
+from agents.report_agent import run_report_generation
 from api.models import (
     TestCase, 
     TestCasesResponse, 
@@ -61,7 +63,9 @@ from api.models import (
     TestAnalysisResult,
     TestCasesDataResponse,
     TestCaseWithData,
-    TestDataBatchUpdateRequest
+    TestDataBatchUpdateRequest,
+    ReportGenerationResponse,
+    DockerReleaseResponse
 )
 
 # 创建路由器
@@ -836,6 +840,9 @@ async def execute_task_tests(
     执行测试任务的所有测试用例
     
     该接口会执行指定任务的所有测试用例，并自动完成测试用例的加载、命令解析、命令执行和结果保存等步骤。
+    在执行之前会检查：
+    1. Docker容器是否已设置
+    2. 所有测试用例是否都已设置测试数据
     
     - **task_id**: 任务ID
     
@@ -851,7 +858,26 @@ async def execute_task_tests(
         if not task:
             log.error(f"任务不存在: {task_id}")
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+        
+        # 检查Docker容器是否已设置
+        if not task.container_name:
+            log.error(f"任务 {task_id} 未设置Docker容器")
+            raise HTTPException(
+                status_code=400, 
+                detail="请先设置Docker容器后再执行测试"
+            )
             
+        # 检查所有测试用例是否都设置了测试数据
+        with get_db() as db:
+            cases = db.query(DBTestCase).filter(DBTestCase.task_id == task_id).all()
+            missing_data_cases = [case.case_id for case in cases if not case.test_data]
+            if missing_data_cases:
+                log.error(f"以下测试用例未设置测试数据: {missing_data_cases}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"以下测试用例未设置测试数据，请先设置后再执行测试: {', '.join(missing_data_cases)}"
+                )
+        
         # 初始化状态
         state = {
             "task_id": task_id,
@@ -1020,6 +1046,9 @@ async def execute_single_test_case(
     执行单个测试用例
     
     该接口会执行指定的单个测试用例，并自动完成命令解析、命令执行和结果保存等步骤。
+    在执行之前会检查：
+    1. Docker容器是否已设置
+    2. 测试用例是否已设置测试数据
     
     - **case_id**: 测试用例ID
     
@@ -1037,6 +1066,27 @@ async def execute_single_test_case(
             
         # 获取任务ID
         task_id = case.task_id
+        
+        # 获取任务信息
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"关联的任务不存在: {task_id}")
+            
+        # 检查Docker容器是否已设置
+        if not task.container_name:
+            log.error(f"任务 {task_id} 未设置Docker容器")
+            raise HTTPException(
+                status_code=400, 
+                detail="请先设置Docker容器后再执行测试"
+            )
+            
+        # 检查测试数据是否已设置
+        if not case.test_data:
+            log.error(f"测试用例 {case_id} 未设置测试数据")
+            raise HTTPException(
+                status_code=400,
+                detail="请先设置测试数据后再执行测试"
+            )
         
         # 初始化状态
         state = {
@@ -1503,3 +1553,126 @@ async def update_test_cases_data(
         db.rollback()
         log.error(f"更新测试用例数据失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"更新测试用例数据失败: {str(e)}")
+
+@router.post("/tasks/{task_id}/report", response_model=ReportGenerationResponse)
+async def generate_task_report(
+    task_id: str = Path(..., description="任务ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    生成测试任务的Excel报告
+    
+    该接口会根据任务ID生成一个包含所有测试用例结果的Excel报告。
+    
+    - **task_id**: 任务ID
+    
+    返回报告生成结果和报告文件路径
+    """
+    log.info(f"开始生成任务报告: {task_id}")
+    
+    try:
+        # 检查任务是否存在
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+        
+        # 调用报告生成函数
+        result = await run_report_generation(task_id)
+        
+        if result.get("status") == "error":
+            error_msg = "; ".join(result.get("errors", ["未知错误"]))
+            log.error(f"生成报告失败: {error_msg}")
+            return ReportGenerationResponse(
+                message="报告生成失败",
+                task_id=task_id,
+                success=False,
+                error=error_msg
+            )
+        
+        report_path = result.get("report_path")
+        if not report_path:
+            log.error("报告生成成功但未返回文件路径")
+            return ReportGenerationResponse(
+                message="报告生成成功但未返回文件路径",
+                task_id=task_id,
+                success=False,
+                error="未获取到报告文件路径"
+            )
+        
+        log.success(f"报告生成成功: {report_path}")
+        return ReportGenerationResponse(
+            message="报告生成成功",
+            task_id=task_id,
+            report_path=report_path,
+            success=True
+        )
+        
+    except Exception as e:
+        log.error(f"生成报告时出错: {str(e)}")
+        return ReportGenerationResponse(
+            message="报告生成失败",
+            task_id=task_id,
+            success=False,
+            error=str(e)
+        )
+
+@router.post("/tasks/{task_id}/release-docker", response_model=DockerReleaseResponse)
+async def release_task_docker(
+    task_id: str = Path(..., description="任务ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    释放指定任务的Docker容器
+    
+    该接口会停止并删除与指定任务关联的Docker容器。
+    
+    - **task_id**: 任务ID
+    
+    返回容器释放结果
+    """
+    log.info(f"开始释放任务Docker容器: {task_id}")
+    
+    try:
+        # 检查任务是否存在
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+        
+        # 检查是否有关联的Docker容器
+        if not task.container_name:
+            return DockerReleaseResponse(
+                message="任务没有关联的Docker容器",
+                success=True,
+                task_id=task_id
+            )
+        
+        # 调用释放函数
+        result = await release_algorithm_container(task_id)
+        
+        if not result["success"]:
+            error_msg = result.get("error", "未知错误")
+            log.error(f"释放Docker容器失败: {error_msg}")
+            return DockerReleaseResponse(
+                message="Docker容器释放失败",
+                success=False,
+                task_id=task_id,
+                container_name=task.container_name,
+                error=error_msg
+            )
+        
+        log.success(f"Docker容器释放成功: {task.container_name}")
+        return DockerReleaseResponse(
+            message="Docker容器释放成功",
+            success=True,
+            task_id=task_id,
+            container_name=task.container_name
+        )
+        
+    except Exception as e:
+        log.error(f"释放Docker容器时出错: {str(e)}")
+        return DockerReleaseResponse(
+            message="Docker容器释放失败",
+            success=False,
+            task_id=task_id,
+            error=str(e)
+        )

@@ -54,3 +54,7 @@ Thumbs.db
 
 # 命令格式文档
 cmd_require.md
+
+# Data directories
+/data/*
+!/data/.gitkeep

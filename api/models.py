@@ -156,3 +156,19 @@ class TestCasesDataResponse(BaseModel):
     message: str = Field(description="响应消息")
     task_id: str = Field(description="任务ID")
     test_cases: List[TestCaseWithData] = Field(description="测试用例列表")
+
+class ReportGenerationResponse(BaseModel):
+    """报告生成响应模型"""
+    message: str = Field(description="响应消息")
+    task_id: str = Field(description="任务ID")
+    report_path: Optional[str] = Field(None, description="报告文件路径")
+    error: Optional[str] = Field(None, description="错误信息")
+    success: bool = Field(description="是否成功")
+
+class DockerReleaseResponse(BaseModel):
+    """Docker容器释放响应模型"""
+    message: str = Field(description="响应消息")
+    success: bool = Field(description="是否成功")
+    task_id: str = Field(description="任务ID")
+    container_name: Optional[str] = Field(None, description="被释放的容器名称")
+    error: Optional[str] = Field(None, description="错误信息")
