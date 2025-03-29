@@ -127,6 +127,26 @@ async def upload_document(
         
         # 读取上传的文件内容并保存
         content = await file.read()
+        
+        # 检查文件内容是否已存在（通过文件哈希值比较）
+        import hashlib
+        file_hash = hashlib.md5(content).hexdigest()
+        
+        # 检查数据库中是否已存在相同内容的文档
+        existing_task = db.query(DBTestTask).filter(
+            DBTestTask.document_hash == file_hash
+        ).first()
+        
+        if existing_task:
+            log.info(f"文件已存在: {file.filename}, 关联任务ID: {existing_task.task_id}")
+            # 返回已存在文档的信息
+            return {
+                "message": "文档已存在",
+                "document_id": existing_task.document_id,
+                "filename": file.filename,
+                "file_path": f"data/pdfs/{existing_task.document_id}_{file.filename}" 
+            }
+            
         with open(file_path, "wb") as f:
             f.write(content)
         
@@ -138,6 +158,7 @@ async def upload_document(
             "requirement_doc": "",  # 暂时不保存文档内容，后续分析时会更新
             "algorithm_image": None,
             "dataset_url": None,
+            "document_hash": file_hash,  # 保存文件哈希值
             "status": "created"
         }
         
@@ -151,6 +172,7 @@ async def upload_document(
             "id": document_id,
             "filename": file.filename,
             "file_path": file_path,
+            "file_hash": file_hash,
             "task_id": task_id  # 保存任务ID
         }
         
