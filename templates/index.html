@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">欢迎使用 ALGOTEST</h5>
+                    <p class="card-text">
+                        ALGOTEST 是一个大模型驱动的算法测试系统，能够自动分析算法需求文档并生成测试用例。
+                        通过本系统，您可以：
+                    </p>
+                    <ul>
+                        <li>上传算法需求文档（PDF格式）</li>
+                        <li>自动分析文档并生成测试用例</li>
+                        <li>配置测试环境和参数</li>
+                        <li>执行测试并获取结果分析</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header">快速开始</div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <a href="/documents/upload" class="btn btn-primary mb-2">上传文档</a>
+                        <a href="/documents" class="btn btn-outline-secondary mb-2">查看已有文档</a>
+                        <a href="/testcases" class="btn btn-outline-secondary">查看测试用例</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-8">
+            <div class="card h-100">
+                <div class="card-header">系统状态</div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">待处理任务</h6>
+                                    <p class="card-text display-6" id="pendingTasksCount">-</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">已完成任务</h6>
+                                    <p class="card-text display-6" id="completedTasksCount">-</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">文档总数</h6>
+                                    <p class="card-text display-6" id="documentsCount">-</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">测试用例总数</h6>
+                                    <p class="card-text display-6" id="testCasesCount">-</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">最近任务</div>
+                <div class="card-body">
+                    <div class="table-responsive" id="recentTasksTable">
+                        <table class="table table-striped table-sm">
+                            <thead>
+                                <tr>
+                                    <th>任务ID</th>
+                                    <th>文档</th>
+                                    <th>状态</th>
+                                    <th>创建时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td colspan="5" class="text-center">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // 加载系统状态数据
+        fetch('/api/tasks')
+            .then(response => response.json())
+            .then(data => {
+                updateDashboardStats(data);
+                updateRecentTasks(data);
+            })
+            .catch(error => {
+                console.error('获取任务数据失败:', error);
+            });
+    });
+
+    function updateDashboardStats(data) {
+        // 这里假设后端API已返回所需数据，实际应根据真实API调整
+        const tasks = data.tasks || [];
+        
+        // 计算统计数据
+        const pendingTasks = tasks.filter(task => ['created', 'preparing', 'executing'].includes(task.status)).length;
+        const completedTasks = tasks.filter(task => ['completed', 'failed'].includes(task.status)).length;
+        
+        // 更新UI
+        document.getElementById('pendingTasksCount').textContent = pendingTasks;
+        document.getElementById('completedTasksCount').textContent = completedTasks;
+        document.getElementById('documentsCount').textContent = tasks.filter(task => task.document_id).length;
+        document.getElementById('testCasesCount').textContent = tasks.reduce((sum, task) => sum + (task.test_cases_count || 0), 0);
+    }
+
+    function updateRecentTasks(data) {
+        const tasks = data.tasks || [];
+        const tableBody = document.querySelector('#recentTasksTable tbody');
+        
+        if (tasks.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="5" class="text-center">暂无任务</td></tr>';
+            return;
+        }
+        
+        // 对任务按创建时间排序，显示最近的5个
+        const recentTasks = [...tasks].sort((a, b) => 
+            new Date(b.created_at) - new Date(a.created_at)
+        ).slice(0, 5);
+        
+        tableBody.innerHTML = recentTasks.map(task => `
+            <tr>
+                <td>${task.task_id}</td>
+                <td>${task.document_id || '-'}</td>
+                <td>
+                    <span class="badge ${getStatusBadgeClass(task.status)}">
+                        ${getStatusText(task.status)}
+                    </span>
+                </td>
+                <td>${formatDate(task.created_at)}</td>
+                <td>
+                    <a href="/tasks/${task.task_id}" class="btn btn-sm btn-outline-primary">详情</a>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function getStatusBadgeClass(status) {
+        const statusMap = {
+            'created': 'bg-secondary',
+            'preparing': 'bg-info',
+            'executing': 'bg-primary',
+            'completed': 'bg-success',
+            'failed': 'bg-danger'
+        };
+        return statusMap[status] || 'bg-secondary';
+    }
+
+    function getStatusText(status) {
+        const statusMap = {
+            'created': '已创建',
+            'preparing': '准备中',
+            'executing': '执行中',
+            'completed': '已完成',
+            'failed': '失败'
+        };
+        return statusMap[status] || status;
+    }
+
+    function formatDate(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+</script>
+{% endblock %} 
