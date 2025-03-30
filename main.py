@@ -30,7 +30,8 @@ def main():
     settings = get_settings()
     
     # 获取端口，确保使用最新设置
-    port = int(os.getenv("API_PORT", 8001))
+    port = int(os.getenv("API_PORT", 8000))
+    print(f"环境变量中的API_PORT: {os.getenv('API_PORT')}")
     
     # 打印启动信息
     print("=" * 80)

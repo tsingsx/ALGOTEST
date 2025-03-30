@@ -226,7 +226,9 @@
                             <tbody>
                                 ${displayCases.map(testCase => `
                                     <tr>
-                                        <td>${testCase.id.substring(0, 8)}</td>
+                                        <td>
+                                            <span class="badge bg-light text-dark">${testCase.id}</span>
+                                        </td>
                                         <td>${testCase.name}</td>
                                         <td>${truncateText(testCase.purpose, 50)}</td>
                                         <td>
@@ -267,15 +269,40 @@
         
         // 显示加载指示器
         const container = document.getElementById('testCasesContainer');
-        showLoading(container, '正在分析文档并生成测试用例，这可能需要几分钟时间...');
+        container.innerHTML = `
+            <div class="text-center my-4">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">分析中...</span>
+                </div>
+                <p class="mt-2">正在分析文档并生成测试用例，这可能需要几分钟时间...</p>
+                <div class="progress mt-3" style="height: 20px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                         role="progressbar" style="width: 100%" 
+                         aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">
+                        处理中...
+                    </div>
+                </div>
+            </div>
+        `;
         
         // 发送分析请求
         fetch(`/api/documents/${documentId}/analyze`, {
-            method: 'POST'
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
         })
         .then(response => {
+            console.log('API响应状态:', response.status);
             if (!response.ok) {
-                throw new Error(`HTTP error ${response.status}`);
+                return response.json().then(errData => {
+                    throw new Error(errData.detail || `HTTP错误 ${response.status}`);
+                }).catch(err => {
+                    if (err instanceof SyntaxError) {
+                        throw new Error(`HTTP错误 ${response.status}`);
+                    }
+                    throw err;
+                });
             }
             return response.json();
         })
@@ -283,14 +310,23 @@
             console.log('分析完成:', data);
             // 刷新页面信息
             loadDocumentInfo();
-            loadTestCases();
-            
-            // 恢复按钮状态
-            analyzeBtn.disabled = false;
-            analyzeBtn.innerHTML = '<i class="bi bi-lightning"></i> 重新生成测试用例';
             
             // 显示成功消息
-            alert(`文档分析完成，生成了 ${data.test_cases.length} 个测试用例`);
+            container.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="bi bi-check-circle me-2"></i>
+                    文档分析成功，生成了 ${data.test_cases.length} 个测试用例
+                </div>
+            `;
+            
+            // 延迟显示测试用例列表
+            setTimeout(() => {
+                loadTestCases();
+                
+                // 恢复按钮状态
+                analyzeBtn.disabled = false;
+                analyzeBtn.innerHTML = '<i class="bi bi-lightning"></i> 重新生成测试用例';
+            }, 2000);
         })
         .catch(error => {
             console.error('文档分析失败:', error);
@@ -299,8 +335,63 @@
             analyzeBtn.innerHTML = '<i class="bi bi-lightning"></i> 生成测试用例';
             
             // 显示错误消息
-            showError(container, '文档分析失败，请重试');
-            alert('文档分析失败，请重试');
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    文档分析失败: ${error.message}
+                </div>
+                <div class="text-center mt-3">
+                    <button class="btn btn-outline-primary" onclick="analyzeDocument()">
+                        <i class="bi bi-arrow-clockwise me-1"></i> 重试
+                    </button>
+                </div>
+            `;
+        });
+    }
+    
+    function getStatusText(status) {
+        const statusMap = {
+            'created': '已上传',
+            'analyzing': '分析中',
+            'analyzed': '已分析',
+            'failed': '分析失败',
+            'completed': '已完成',
+            'pending': '待处理',
+            'executing': '执行中'
+        };
+        return statusMap[status] || status;
+    }
+    
+    function getStatusBadgeClass(status) {
+        const statusMap = {
+            'created': 'bg-secondary',
+            'analyzing': 'bg-info',
+            'analyzed': 'bg-success',
+            'failed': 'bg-danger',
+            'completed': 'bg-success',
+            'pending': 'bg-secondary',
+            'executing': 'bg-primary'
+        };
+        return statusMap[status] || 'bg-secondary';
+    }
+    
+    function showError(container, message) {
+        container.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-triangle me-2"></i> ${message}
+            </div>
+        `;
+    }
+    
+    function formatDate(dateString) {
+        if (!dateString) return '-';
+        const date = new Date(dateString);
+        return date.toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
         });
     }
     

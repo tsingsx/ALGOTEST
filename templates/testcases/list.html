@@ -64,13 +64,7 @@
         if (testCases.length === 0) {
             container.innerHTML = `
                 <div class="alert alert-info">
-                    <i class="bi bi-info-circle"></i> 
-                    ${documentId ? '该文档暂无测试用例' : '暂无测试用例'}
-                </div>
-                <div class="text-center">
-                    <a href="/testcases/create${documentId ? '?document_id='+documentId : ''}" class="btn btn-primary">
-                        <i class="bi bi-plus-lg"></i> 创建测试用例
-                    </a>
+                    <i class="bi bi-info-circle me-2"></i>没有测试用例，可点击"创建测试用例"按钮添加。
                 </div>
             `;
             return;
@@ -81,21 +75,21 @@
                 <table class="table table-hover">
                     <thead>
                         <tr>
-                            <th>ID</th>
-                            <th>名称</th>
-                            <th>测试目的</th>
-                            <th>文档</th>
-                            <th>状态</th>
-                            <th>操作</th>
+                            <th style="width: 20%;">ID</th>
+                            <th style="width: 20%;">名称</th>
+                            <th style="width: 30%;">测试目的</th>
+                            <th style="width: 15%;">状态</th>
+                            <th style="width: 15%;">操作</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${testCases.map(testCase => `
                             <tr>
-                                <td>${testCase.id.substring(0, 8)}</td>
+                                <td>
+                                    <span class="badge bg-light text-dark">${testCase.id}</span>
+                                </td>
                                 <td>${testCase.name}</td>
                                 <td>${truncateText(testCase.purpose, 50)}</td>
-                                <td>${testCase.document_id ? testCase.document_id.substring(0, 8) : '-'}</td>
                                 <td>
                                     <span class="badge ${getCaseStatusBadge(testCase.status)}">
                                         ${getCaseStatusText(testCase.status)}
@@ -103,8 +97,12 @@
                                 </td>
                                 <td>
                                     <div class="btn-group btn-group-sm">
-                                        <a href="/testcases/${testCase.id}" class="btn btn-outline-primary">详情</a>
-                                        <a href="/testcases/${testCase.id}/edit" class="btn btn-outline-secondary">编辑</a>
+                                        <a href="/testcases/${testCase.id}" class="btn btn-outline-primary">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <a href="/testcases/${testCase.id}/edit" class="btn btn-outline-secondary">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
                                     </div>
                                 </td>
                             </tr>

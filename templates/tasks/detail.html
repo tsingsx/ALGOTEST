@@ -377,6 +377,14 @@
                     </div>
                 </div>
             `;
+            
+            // 绑定开始测试按钮点击事件
+            setTimeout(() => {
+                const startTestBtn = document.getElementById('startTestBtn');
+                if (startTestBtn && !(!task.algorithm_image || !task.dataset_url)) {
+                    startTestBtn.addEventListener('click', () => executeTask(task.task_id));
+                }
+            }, 0);
         }
     }
 
@@ -523,9 +531,64 @@
             return;
         }
         
-        // 这里应该发送API请求执行测试任务
-        alert(`正在准备执行测试任务: ${taskId}\n即将跳转到执行监控页面`);
-        //window.location.href = `/execution/${taskId}/monitor`;
+        // 更新UI状态
+        const executeBtn = document.getElementById('executeBtn');
+        executeBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> 执行中...';
+        executeBtn.disabled = true;
+        
+        // 发送API请求执行测试任务
+        fetch(`/api/tasks/${taskId}/execute`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('测试执行任务已启动:', data);
+            
+            // 提示用户执行已开始
+            showNotification('success', `测试执行已开始，共 ${data.cases_total} 个测试用例`);
+            
+            // 定时刷新页面，获取最新状态
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        })
+        .catch(error => {
+            console.error('执行测试任务失败:', error);
+            showNotification('danger', `执行测试任务失败: ${error.message}`);
+            
+            // 恢复按钮状态
+            executeBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i> 执行测试';
+            executeBtn.disabled = false;
+        });
+    }
+    
+    // 显示通知消息
+    function showNotification(type, message) {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+        alertDiv.innerHTML = `
+            <i class="bi ${type === 'success' ? 'bi-check-circle' : 'bi-exclamation-triangle'} me-2"></i>
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+        
+        // 在页面顶部显示通知
+        const container = document.querySelector('.container');
+        container.insertBefore(alertDiv, container.firstChild);
+        
+        // 自动关闭通知
+        setTimeout(() => {
+            alertDiv.classList.remove('show');
+            setTimeout(() => alertDiv.remove(), 300);
+        }, 5000);
     }
 
     function getStatusIcon(status) {

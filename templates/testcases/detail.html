@@ -227,6 +227,10 @@
                         '<span class="badge bg-secondary">无</span>'
                     }
                 </li>
+                <li id="testDataInfo" class="list-group-item d-flex justify-content-between align-items-center">
+                    <span>测试图片文件名</span>
+                    <span class="text-muted">加载中...</span>
+                </li>
                 <li class="list-group-item d-flex justify-content-between align-items-center">
                     <span>创建时间</span>
                     <span>${formatDate(data.created_at) || '-'}</span>
@@ -237,6 +241,49 @@
                 </li>
             </ul>
         `;
+        
+        // 获取测试图片文件名
+        if (data.document_id) {
+            fetch(`/api/tasks/${data.document_id}/test-data`)
+                .then(response => response.json())
+                .then(testDataResponse => {
+                    const testCases = testDataResponse.test_cases || [];
+                    const thisCase = testCases.find(tc => tc.case_id === case_id);
+                    const testDataInfo = document.getElementById('testDataInfo');
+                    
+                    if (testDataInfo) {
+                        if (thisCase && thisCase.test_data) {
+                            testDataInfo.innerHTML = `
+                                <span>测试图片文件名</span>
+                                <span class="text-nowrap">${thisCase.test_data}</span>
+                            `;
+                        } else {
+                            testDataInfo.innerHTML = `
+                                <span>测试图片文件名</span>
+                                <span class="badge bg-secondary">未设置</span>
+                            `;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('获取测试数据失败:', error);
+                    const testDataInfo = document.getElementById('testDataInfo');
+                    if (testDataInfo) {
+                        testDataInfo.innerHTML = `
+                            <span>测试图片文件名</span>
+                            <span class="text-danger">获取失败</span>
+                        `;
+                    }
+                });
+        } else {
+            const testDataInfo = document.getElementById('testDataInfo');
+            if (testDataInfo) {
+                testDataInfo.innerHTML = `
+                    <span>测试图片文件名</span>
+                    <span class="badge bg-secondary">不可用</span>
+                `;
+            }
+        }
         
         // 更新执行结果
         const resultContainer = document.getElementById('resultContainer');
