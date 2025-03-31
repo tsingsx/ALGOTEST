@@ -11,9 +11,9 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 
 from core.logger import get_logger
-from api.routes import router
 
 # 获取日志记录器
 log = get_logger("api")
@@ -37,9 +37,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 添加路由
-app.include_router(router)
-
+# 挂载静态文件
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 请求日志中间件
 @app.middleware("http")
@@ -132,10 +131,3 @@ async def general_exception_handler(request: Request, exc: Exception):
             "method": request.method
         }
     )
-
-
-# 根路由
-@app.get("/")
-async def root():
-    """API根路由，重定向到API文档"""
-    return {"message": "欢迎使用ALGOTEST API", "docs": "/api/docs"}
