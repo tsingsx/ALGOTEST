@@ -127,6 +127,26 @@ async def upload_document(
         
         # 读取上传的文件内容并保存
         content = await file.read()
+        
+        # 检查文件内容是否已存在（通过文件哈希值比较）
+        import hashlib
+        file_hash = hashlib.md5(content).hexdigest()
+        
+        # 检查数据库中是否已存在相同内容的文档
+        existing_task = db.query(DBTestTask).filter(
+            DBTestTask.document_hash == file_hash
+        ).first()
+        
+        if existing_task:
+            log.info(f"文件已存在: {file.filename}, 关联任务ID: {existing_task.task_id}")
+            # 返回已存在文档的信息
+            return {
+                "message": "文档已存在",
+                "document_id": existing_task.document_id,
+                "filename": file.filename,
+                "file_path": f"data/pdfs/{existing_task.document_id}_{file.filename}" 
+            }
+            
         with open(file_path, "wb") as f:
             f.write(content)
         
@@ -138,6 +158,7 @@ async def upload_document(
             "requirement_doc": "",  # 暂时不保存文档内容，后续分析时会更新
             "algorithm_image": None,
             "dataset_url": None,
+            "document_hash": file_hash,  # 保存文件哈希值
             "status": "created"
         }
         
@@ -151,6 +172,7 @@ async def upload_document(
             "id": document_id,
             "filename": file.filename,
             "file_path": file_path,
+            "file_hash": file_hash,
             "task_id": task_id  # 保存任务ID
         }
         
@@ -624,6 +646,68 @@ async def update_task_algorithm_image(
         raise HTTPException(status_code=500, detail=f"更新算法镜像地址异常: {str(e)}")
 
 
+# 添加数据集地址 - PUT方法
+@router.put("/tasks/{task_id}/algorithm_image", response_model=MessageResponse)
+async def update_algorithm_image_put(
+    task_id: str = Path(..., description="任务ID"),
+    request: AlgorithmImageRequest = Body(..., description="算法镜像信息"),
+    db: Session = Depends(get_db)
+):
+    """
+    通过任务ID更新算法镜像地址 (PUT方法)
+    
+    - **task_id**: 任务ID
+    - **request**: 包含算法镜像地址的请求
+    
+    返回成功消息
+    """
+    log.info(f"开始更新任务的算法镜像地址 (PUT): {request.algorithm_image}, 任务ID: {task_id}")
+    
+    try:
+        # 使用专用函数更新算法镜像地址
+        task = db_update_algorithm_image(task_id, request.algorithm_image)
+        
+        if task:
+            log.success(f"更新任务 {task_id} 的算法镜像地址成功: {request.algorithm_image}")
+            return {"message": f"算法镜像地址已成功更新: {request.algorithm_image}"}
+        else:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    except Exception as e:
+        log.error(f"更新算法镜像地址异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新算法镜像地址异常: {str(e)}")
+
+
+# 添加数据集地址 - PUT方法
+@router.put("/tasks/{task_id}/dataset_url", response_model=MessageResponse)
+async def update_dataset_url_put(
+    task_id: str = Path(..., description="任务ID"),
+    request: DatasetUrlRequest = Body(..., description="数据集地址信息"),
+    db: Session = Depends(get_db)
+):
+    """
+    通过任务ID更新数据集地址 (PUT方法)
+    
+    - **task_id**: 任务ID
+    - **request**: 包含数据集地址的请求
+    
+    返回成功消息
+    """
+    log.info(f"开始更新任务的数据集地址 (PUT): {request.dataset_url}, 任务ID: {task_id}")
+    
+    try:
+        # 使用专用函数更新数据集地址
+        task = db_update_dataset_url(task_id, request.dataset_url)
+        
+        if task:
+            log.success(f"更新任务 {task_id} 的数据集地址成功: {request.dataset_url}")
+            return {"message": f"数据集地址已成功更新: {request.dataset_url}"}
+        else:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    except Exception as e:
+        log.error(f"更新数据集地址异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新数据集地址异常: {str(e)}")
+
+
 # 添加数据集地址
 @router.post("/tasks/{task_id}/dataset-url", response_model=MessageResponse)
 async def update_task_dataset_url(
@@ -794,6 +878,17 @@ async def prepare_task_execution(
             log.error(f"任务 {task_id} 未配置算法镜像")
             raise HTTPException(status_code=400, detail=f"未配置算法镜像，请先设置算法镜像")
         
+        # 检查任务是否已有容器名称
+        if task.container_name:
+            log.info(f"任务 {task_id} 已有容器名称: {task.container_name}，跳过设置")
+            return {
+                "message": "Docker容器已存在",
+                "success": True,
+                "task_id": task_id,
+                "container_name": task.container_name,
+                "error": None
+            }
+        
         # 调用执行函数设置Docker容器
         log.info(f"开始为任务 {task_id} 设置Docker容器，算法镜像: {task.algorithm_image}")
         result = await setup_algorithm_container(task_id)
@@ -859,14 +954,26 @@ async def execute_task_tests(
             log.error(f"任务不存在: {task_id}")
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
         
-        # 检查Docker容器是否已设置
+        # 检查Docker容器是否已设置，如果未设置则自动设置默认容器名称
         if not task.container_name:
-            log.error(f"任务 {task_id} 未设置Docker容器")
-            raise HTTPException(
-                status_code=400, 
-                detail="请先设置Docker容器后再执行测试"
-            )
+            log.warning(f"任务 {task_id} 未设置Docker容器，尝试自动设置默认容器名称")
             
+            # 检查是否设置了算法镜像
+            if not task.algorithm_image:
+                log.error(f"任务 {task_id} 未配置算法镜像，无法自动设置容器")
+                raise HTTPException(status_code=400, detail="未配置算法镜像，请先设置算法镜像后再执行测试")
+                
+            # 设置默认容器名称
+            default_container_name = f"algotest_{task_id}"
+            log.info(f"为任务 {task_id} 设置默认容器名称: {default_container_name}")
+            
+            # 更新任务的容器名称
+            update_task_container_name(task_id, default_container_name)
+            
+            # 重新获取更新后的任务信息
+            task = get_test_task(task_id)
+            log.info(f"已为任务 {task_id} 自动设置容器名称: {task.container_name}")
+        
         # 检查所有测试用例是否都设置了测试数据
         with get_db() as db:
             cases = db.query(DBTestCase).filter(DBTestCase.task_id == task_id).all()

@@ -41,6 +41,7 @@ class TestTask(Base):
     algorithm_image = Column(String(255))
     dataset_url = Column(String(255), nullable=True)  # 数据集URL
     container_name = Column(String(255), nullable=True)  # 容器名称
+    document_hash = Column(String(32), nullable=True)  # 文档MD5哈希值，用于检测重复文档
     status = Column(String(20), default="pending")  # pending, running, completed, failed
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
