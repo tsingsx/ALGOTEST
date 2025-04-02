@@ -45,27 +45,32 @@ from agents.execution_agent import (
     release_algorithm_container
 )
 from agents.report_agent import run_report_generation
+from agents.select_agent import select_test_images
 from api.models import (
     TestCase, 
     TestCasesResponse, 
     DocumentUploadResponse, 
     DocumentAnalysisRequest,
+    AlgorithmImageRequest,
+    DatasetUrlRequest,
     TestCaseCreateRequest,
     TestCaseUpdateRequest,
     MessageResponse,
-    AlgorithmImageRequest,
-    DatasetUrlRequest,
     TestTaskItem,
     TestTasksResponse,
     DockerSetupResponse,
     TestExecutionResponse,
-    TestAnalysisResponse,
     TestAnalysisResult,
-    TestCasesDataResponse,
+    TestAnalysisResponse,
+    TestDataUpdateRequest,
     TestCaseWithData,
-    TestDataBatchUpdateRequest,
+    TestCasesDataResponse,
     ReportGenerationResponse,
-    DockerReleaseResponse
+    TestDataBatchUpdateRequest,
+    DockerReleaseResponse,
+    TaskTestCasesResponse,
+    BatchTestDataSetRequest,
+    ImageSelectionResponse
 )
 
 # 创建路由器
@@ -189,6 +194,204 @@ async def upload_document(
             db.rollback()
         log.error(f"文档上传异常: {str(e)}")
         raise HTTPException(status_code=500, detail=f"文档上传异常: {str(e)}")
+
+
+# 3. 获取测试用例列表
+@router.get("/testcases", response_model=TestCasesResponse)
+async def get_test_cases(
+    document_id: Optional[str] = Query(None, description="文档ID，可选"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取测试用例列表
+    
+    - **document_id**: 可选的文档ID，如果提供则只返回该文档的测试用例
+    
+    返回测试用例列表
+    """
+    query = db.query(DBTestCase)
+    if document_id:
+        query = query.filter(DBTestCase.document_id == document_id)
+    
+    cases = query.all()
+    formatted_cases = [format_test_case(case) for case in cases]
+    return {
+        "message": f"成功获取{len(formatted_cases)}个测试用例",
+        "test_cases": formatted_cases
+    }
+
+
+# 批量设置测试数据页面的任务列表API - 确保这个路由在通配符路由前定义
+@router.get("/testcases/batch-data", response_model=TaskTestCasesResponse)
+async def get_tasks_for_batch_data(
+    db: Session = Depends(get_db)
+):
+    """
+    获取所有任务及其测试用例，用于批量设置测试数据页面
+    
+    返回所有任务列表，包含任务信息和测试用例
+    """
+    log.info("获取所有任务及其测试用例，用于批量设置测试数据")
+    
+    try:
+        # 获取所有任务
+        tasks = db.query(DBTestTask).all()
+        
+        # 构建结果
+        result = []
+        for task in tasks:
+            # 获取任务的测试用例
+            test_cases = db.query(DBTestCase).filter(DBTestCase.task_id == task.task_id).all()
+            
+            # 格式化测试用例
+            formatted_cases = []
+            for case in test_cases:
+                input_data = case.input_data or {}
+                formatted_cases.append({
+                    "case_id": case.case_id,
+                    "name": input_data.get("name", "未命名测试用例"),
+                    "purpose": input_data.get("purpose", ""),
+                    "test_data": case.test_data,
+                    "status": case.status or "pending"
+                })
+            
+            # 添加到结果
+            result.append({
+                "task_id": task.task_id,
+                "algorithm_image": task.algorithm_image,
+                "dataset_url": task.dataset_url,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "status": task.status,
+                "test_cases_count": len(formatted_cases),
+                "test_cases": formatted_cases
+            })
+        
+        return TaskTestCasesResponse(
+            message=f"成功获取{len(result)}个任务及其测试用例",
+            tasks=result
+        )
+        
+    except Exception as e:
+        log.error(f"获取任务及测试用例失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取任务及测试用例失败: {str(e)}")
+
+
+# 任务测试用例列表API - 确保这个路由在通配符路由前定义
+@router.get("/testcases/tasks", response_model=TaskTestCasesResponse)
+async def get_tasks_with_testcases(
+    db: Session = Depends(get_db)
+):
+    """
+    获取所有任务及其测试用例，用于批量设置测试数据
+    
+    返回所有任务列表，包含任务信息和测试用例
+    """
+    log.info("获取所有任务及其测试用例")
+    
+    try:
+        # 获取所有任务
+        tasks = db.query(DBTestTask).all()
+        
+        # 构建结果
+        result = []
+        for task in tasks:
+            # 获取任务的测试用例
+            test_cases = db.query(DBTestCase).filter(DBTestCase.task_id == task.task_id).all()
+            
+            # 格式化测试用例
+            formatted_cases = []
+            for case in test_cases:
+                input_data = case.input_data or {}
+                formatted_cases.append({
+                    "case_id": case.case_id,
+                    "name": input_data.get("name", "未命名测试用例"),
+                    "purpose": input_data.get("purpose", ""),
+                    "test_data": case.test_data,
+                    "status": case.status or "pending"
+                })
+            
+            # 添加到结果
+            result.append({
+                "task_id": task.task_id,
+                "algorithm_image": task.algorithm_image,
+                "dataset_url": task.dataset_url,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "status": task.status,
+                "test_cases_count": len(formatted_cases),
+                "test_cases": formatted_cases
+            })
+        
+        return TaskTestCasesResponse(
+            message=f"成功获取{len(result)}个任务及其测试用例",
+            tasks=result
+        )
+        
+    except Exception as e:
+        log.error(f"获取任务及测试用例失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取任务及测试用例失败: {str(e)}")
+
+
+# 批量设置测试数据API - 确保这个路由在通配符路由前定义
+@router.post("/testcases/batch-set-data", response_model=MessageResponse)
+async def batch_set_test_data(
+    request: BatchTestDataSetRequest = Body(..., description="批量设置测试数据请求"),
+    db: Session = Depends(get_db)
+):
+    """
+    批量设置测试用例的测试数据
+    
+    - **request**: 包含测试用例ID列表和测试数据路径
+    
+    返回更新结果
+    """
+    log.info(f"批量设置测试数据，共{len(request.case_ids)}个测试用例")
+    
+    try:
+        # 获取所有指定ID的测试用例
+        cases = db.query(DBTestCase).filter(DBTestCase.case_id.in_(request.case_ids)).all()
+        
+        if not cases:
+            raise HTTPException(status_code=404, detail="未找到指定的测试用例")
+        
+        # 更新测试数据
+        for case in cases:
+            case.test_data = request.test_data
+        
+        # 提交更新
+        db.commit()
+        
+        return MessageResponse(message=f"成功更新{len(cases)}个测试用例的测试数据")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        log.error(f"批量设置测试数据失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"批量设置测试数据失败: {str(e)}")
+
+
+# 获取单个测试用例 - 通配符路由放在具体路由之后
+@router.get("/testcases/{case_id}", response_model=TestCase)
+async def get_test_case(
+    case_id: str = Path(..., description="测试用例ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取单个测试用例详情
+    
+    - **case_id**: 测试用例ID
+    
+    返回测试用例详情
+    """
+    # 跳过特殊路径
+    if case_id in ["tasks", "batch-data", "batch-set-data"]:
+        raise HTTPException(status_code=404, detail=f"未找到路径: /testcases/{case_id}")
+        
+    case = db.query(DBTestCase).filter(DBTestCase.case_id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail=f"测试用例不存在: {case_id}")
+    
+    return format_test_case(case)
 
 
 # 2. 文档分析接口
@@ -318,52 +521,7 @@ async def analyze_document(
         raise HTTPException(status_code=500, detail=f"分析文档异常: {str(e)}")
 
 
-# 3. 获取测试用例列表
-@router.get("/testcases", response_model=TestCasesResponse)
-async def get_test_cases(
-    document_id: Optional[str] = Query(None, description="文档ID，可选"),
-    db: Session = Depends(get_db)
-):
-    """
-    获取测试用例列表
-    
-    - **document_id**: 可选的文档ID，如果提供则只返回该文档的测试用例
-    
-    返回测试用例列表
-    """
-    query = db.query(DBTestCase)
-    if document_id:
-        query = query.filter(DBTestCase.document_id == document_id)
-    
-    cases = query.all()
-    formatted_cases = [format_test_case(case) for case in cases]
-    return {
-        "message": f"成功获取{len(formatted_cases)}个测试用例",
-        "test_cases": formatted_cases
-    }
-
-
-# 4. 获取单个测试用例
-@router.get("/testcases/{case_id}", response_model=TestCase)
-async def get_test_case(
-    case_id: str = Path(..., description="测试用例ID"),
-    db: Session = Depends(get_db)
-):
-    """
-    获取单个测试用例详情
-    
-    - **case_id**: 测试用例ID
-    
-    返回测试用例详情
-    """
-    case = db.query(DBTestCase).filter(DBTestCase.case_id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail=f"测试用例不存在: {case_id}")
-    
-    return format_test_case(case)
-
-
-# 5. 创建测试用例
+# 4. 创建测试用例
 @router.post("/testcases", response_model=TestCase)
 async def create_test_case_endpoint(
     test_case: TestCaseCreateRequest = Body(..., description="测试用例信息"),
@@ -420,7 +578,7 @@ async def create_test_case_endpoint(
     return format_test_case(case)
 
 
-# 6. 更新测试用例
+# 5. 更新测试用例
 @router.put("/testcases/{case_id}", response_model=TestCase)
 async def update_test_case(
     case_id: str = Path(..., description="测试用例ID"),
@@ -468,7 +626,7 @@ async def update_test_case(
     return format_test_case(case)
 
 
-# 7. 删除测试用例
+# 6. 删除测试用例
 @router.delete("/testcases/{case_id}", response_model=MessageResponse)
 async def delete_test_case(
     case_id: str = Path(..., description="测试用例ID"),
@@ -492,7 +650,7 @@ async def delete_test_case(
     return {"message": f"测试用例删除成功: {case_id}"}
 
 
-# 8. 兼容旧接口 - 直接从上传文档生成测试用例
+# 7. 兼容旧接口 - 直接从上传文档生成测试用例
 @router.post("/generate-testcases", response_model=TestCasesResponse)
 async def generate_testcases_from_doc(
     file: UploadFile = File(..., description="算法需求文档文件（PDF格式）"),
@@ -1807,3 +1965,62 @@ async def get_testcase_task(
     
     log.info(f"查询到测试用例对应的任务ID: {case.task_id}")
     return {"task_id": case.task_id}
+
+# 添加新的API端点
+@router.post("/tasks/{task_id}/select-images", response_model=ImageSelectionResponse)
+async def execute_select_images(
+    task_id: str = Path(..., description="任务ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    为任务中的测试用例自动选择合适的测试图片
+    
+    - **task_id**: 任务ID
+    
+    返回选择结果，包括成功状态、任务ID、更新的测试用例数量等信息
+    """
+    log.info(f"开始为任务 {task_id} 执行图片选择")
+    
+    try:
+        # 检查任务是否存在
+        task = get_test_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"未找到任务: {task_id}")
+        
+        # 检查任务是否有数据集URL
+        if not task.dataset_url:
+            raise HTTPException(status_code=400, detail=f"任务 {task_id} 未设置数据集URL")
+        
+        # 检查任务是否有测试用例
+        with db as session:
+            test_cases_count = session.query(DBTestCase).filter(DBTestCase.task_id == task_id).count()
+            if test_cases_count == 0:
+                raise HTTPException(status_code=400, detail=f"任务 {task_id} 没有测试用例")
+        
+        # 调用select_test_images函数
+        result = await select_test_images(task_id)
+        
+        # 根据结果返回响应
+        if result.get("success"):
+            return {
+                "success": True,
+                "message": f"成功为任务 {task_id} 选择测试图片",
+                "task_id": task_id,
+                "updated_count": result.get("updated_count", 0),
+                "image_examples": list(result.get("image_mapping", {}).items())[:5] if result.get("image_mapping") else []
+            }
+        else:
+            # 如果执行失败，返回错误信息
+            return {
+                "success": False,
+                "message": f"为任务 {task_id} 选择测试图片失败",
+                "task_id": task_id,
+                "errors": result.get("errors", ["未知错误"]),
+                "status": result.get("status", "未知状态")
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"执行图片选择时出错: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"执行图片选择时出错: {str(e)}")

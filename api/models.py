@@ -6,7 +6,7 @@
 开发规划：使用Pydantic模型定义API接口的请求和响应数据结构
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 
 
@@ -172,3 +172,23 @@ class DockerReleaseResponse(BaseModel):
     task_id: str = Field(description="任务ID")
     container_name: Optional[str] = Field(None, description="被释放的容器名称")
     error: Optional[str] = Field(None, description="错误信息")
+
+class TaskTestCasesResponse(BaseModel):
+    """多个任务的测试用例列表响应模型"""
+    message: str = Field(description="响应消息")
+    tasks: List[Dict[str, Any]] = Field(description="任务列表，包含测试用例信息")
+
+class BatchTestDataSetRequest(BaseModel):
+    """批量设置测试数据请求模型"""
+    case_ids: List[str] = Field(description="测试用例ID列表")
+    test_data: str = Field(description="测试数据路径")
+
+class ImageSelectionResponse(BaseModel):
+    """图片选择响应模型"""
+    success: bool = Field(description="是否成功")
+    message: str = Field(description="响应消息")
+    task_id: str = Field(description="任务ID")
+    updated_count: Optional[int] = Field(None, description="更新的测试用例数量")
+    image_examples: Optional[List[Tuple[str, str]]] = Field(None, description="示例图片映射")
+    errors: Optional[List[str]] = Field(None, description="错误信息列表")
+    status: Optional[str] = Field(None, description="操作状态")

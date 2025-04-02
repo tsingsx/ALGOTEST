@@ -7,11 +7,12 @@
 """
 
 from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from core.database import get_db, Session
 from core.logger import get_logger
 from typing import Optional
+import os
 
 # 创建路由器
 router = APIRouter(tags=["web"])
@@ -111,6 +112,14 @@ async def testcase_edit(request: Request, case_id: str):
         }
     )
 
+@router.get("/testcases/batch-data", response_class=HTMLResponse)
+async def testcases_batch_data(request: Request):
+    """渲染批量设置测试数据页面"""
+    return templates.TemplateResponse(
+        "testcases/batch_data.html", 
+        {"request": request, "title": "批量设置测试数据"}
+    )
+
 # 任务管理路由
 @router.get("/tasks", response_class=HTMLResponse)
 async def tasks_list(request: Request):
@@ -188,4 +197,16 @@ async def report_detail(request: Request, task_id: str):
             "title": "报告详情",
             "task_id": task_id
         }
+    )
+
+@router.get("/download/data/report/{filename:path}", response_class=FileResponse)
+async def download_report(filename: str):
+    """下载报告文件"""
+    file_path = os.path.join("data", "report", filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="报告文件不存在")
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     ) 
